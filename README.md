@@ -125,7 +125,7 @@ linux-kmods/
 │   ├── run_qemu.sh                      #   → tools/devops.py run
 │   └── qmp_dev.py                       #   通用 QMP 工具：--match <设备> 定位，get/set 任意属性
 ├── tools/
-│   ├── devops.py                        # ★ 唯一入口：doctor/init/build[/drivers]/run/verify/qemu/kernel/clean
+│   ├── devops.py                        # ★ 唯一入口：doctor/init/build[/drivers]/run/verify/qemu/clean
 │   └── README.md
 ├── tests/                               # ← 与 drivers/ 同构（子系统/<总线>-<器件>）
 │   ├── hwmon/i2c-tmp105/
@@ -185,7 +185,7 @@ python3 tools/devops.py run --qmp /tmp/tmp105.sock   # 手动调试（配合 scr
 python3 tools/devops.py verify               # 跑 4 个 tests/*/*/verify_qemu.sh
 python3 tools/devops.py verify hwmon         # 只跑名字含 hwmon 的测试
 python3 tools/devops.py qemu status|diff|checkout|patch|reset|rebase   # QEMU 改动流程
-python3 tools/devops.py kernel status|diff|checkout|patch|reset        # 内核改动流程
+# 内核改动直接用 git：git -C external/linux-4.9.263 ...
 python3 tools/devops.py clean env|all --yes  # 删除 build/ 或 build/+external/
 python3 tools/devops.py status               # 看版本/路径/产物
 ```

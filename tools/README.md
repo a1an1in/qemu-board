@@ -22,11 +22,12 @@ python3 tools/devops.py <命令> [选项]
 | `run` | 启动 QEMU（9p 挂载仓库）。`--qmp`、`--dtb`、`--flash`、`--qemu`、`--kdir`、`--initrd`；`--` 之后可传额外 QEMU 参数 |
 | `verify [子串]` | 依次运行 `tests/*/*/verify_qemu.sh`，可按名字过滤（如 `hwmon`） |
 | `qemu status\|diff\|checkout\|patch\|reset\|rebase <base>` | QEMU 定制工作流；patch 目录是 `env/qemu/patches/`（按文件名排序） |
-| `kernel status\|diff\|checkout\|patch\|reset` | 内核定制工作流；`external/linux-*` 有本地 `lab-base` git 基线，patch 目录是 `env/kernel/patches/` |
 | `clean [drivers\|env\|all]` | 清驱动产物 / `build/` / `build/+external/`；非交互环境需 `--yes` |
 | `status` | 查看版本、路径、产物和 QEMU 分支状态 |
 | `list` | 列出会被构建的模块目录 |
 | `help` | 帮助 |
+
+> 内核代码不用 `devops.py` 管，直接 `git -C external/linux-* ...`。
 
 ## 环境变量
 
@@ -42,7 +43,7 @@ python3 tools/devops.py <命令> [选项]
 | `KDIR` | `build/kernel` | 编外部模块用的内核树 |
 | `QEMU_PATCH_DIR` | `env/qemu/patches` | 换一套 QEMU patch 目录（可选） |
 | `KERNEL_PATCH_DIR` | `env/kernel/patches` | 换一套内核 patch 目录（可选） |
-| `KERNEL_GIT` | `1` | 设为 `0` 跳过内核 git 基线（`kernel` 子命令不可用） |
+| `KERNEL_GIT` | `1` | 设为 `0` 跳过 `init` 建立内核 git 基线（之后需自己 `git init`） |
 | `JOBS` / `ARCH` / `CROSS_COMPILE` | `nproc` / `arm64` / `aarch64-linux-gnu-` | 编译参数 |
 | `QEMU` / `INITRD` / `KMODS_ROOT` / `QMP_SOCK` | 由 recipe 推导 | `run` 覆盖 |
 
@@ -54,7 +55,7 @@ python3 tools/devops.py <命令> [选项]
 |---|---|---|---|
 | 驱动 / 测试 / 文档 | `drivers/ test/ doc/`（本仓库） | `git add` + `git commit` | 不需要；正常 git 提交即可 |
 | QEMU 设备模型 / virt 板级 | `external/qemu`（临时工作区） | `qemu patch` → `env/qemu/patches/` | **需要**，patch 才是长期真相 |
-| 内核代码 | `external/linux-*`（本地 git 基线） | `kernel patch` → `env/kernel/patches/` | **需要** |
+| 内核代码 | `external/linux-*`（本地 git 基线） | 手动 `git format-patch` → `env/kernel/patches/` | **需要**，用 git 自己管 |
 | busybox 代码 | `external/busybox-*` | 目前只支持配置/overlay；代码补丁需自己加队列 | 需要时再加 |
 
 ### 看改动了什么
@@ -63,10 +64,14 @@ python3 tools/devops.py <命令> [选项]
 python3 tools/devops.py qemu status        # base/patches/分支/最近提交/是否脏
 python3 tools/devops.py qemu diff          # 相对基线的 stat + 文件列表
 python3 tools/devops.py qemu diff --full   # 完整 diff
+```
 
-python3 tools/devops.py kernel status
-python3 tools/devops.py kernel diff
-python3 tools/devops.py kernel diff --full
+内核直接看 git：
+
+```sh
+git -C external/linux-4.9.263 status
+git -C external/linux-4.9.263 diff
+git -C external/linux-4.9.263 log --oneline lab-base..dev
 ```
 
 也可以直接用 git（`external/qemu` 是完整仓库，`external/linux-*` 在 `init` 后也有
@@ -132,29 +137,36 @@ git commit -m "chardev_i2c_tmp105: ..."
 驱动源码本来就在总仓里，不需要 `env/` patch；如果要给内核上游发补丁，再用标准
 `git format-patch -1 HEAD` 生成邮件补丁。
 
-### 内核：改代码 → 导出补丁
+### 内核：直接用 git
 
 ```sh
-python3 tools/devops.py init           # 首次：建立 lab-base 基线
-python3 tools/devops.py kernel checkout    # 切到 external/linux-* 的 dev
-vim external/linux-4.9.263/drivers/...
-git -C external/linux-4.9.263 commit -am "my change"
-python3 tools/devops.py kernel patch  # 重写 env/kernel/patches/*.patch
+python3 tools/devops.py init           # 首次：建立 lab-base 基线 + dev 分支
+
+cd external/linux-4.9.263
+git checkout dev                       # init 已建；不存在时 git checkout -b dev lab-base
+vim drivers/...
+git commit -am "my change"
+rm -f ../../env/kernel/patches/*.patch
+git format-patch --zero-commit --no-signature --no-numbered --full-index \
+    -o ../../env/kernel/patches lab-base..dev
+cd ../..
 git add env/kernel/patches
 git commit -m "kernel: my change"
 ```
 
+重放/回退也直接用 git：
+
+```sh
+cd external/linux-4.9.263
+git checkout -f -B dev lab-base
+git clean -fdx
+git am --3way ../../env/kernel/patches/*.patch
+```
+
 > 第一次 `init` 才会在 `external/linux-*` 里创建 `.git`。在此之前，`git -C
 > external/linux-* status` 会向上找到总仓的 `.git`，看起来像 linux-kmods 的仓库，
-> 这是正常的；`kernel status` 也会提示“还没有 git 基线”。
-
-- `kernel patch` 生成 `git format-patch --zero-commit` 格式，`init` / `kernel reset`
-  会用 `git am --3way` 重放。
-- 验证：`python3 tools/devops.py kernel reset && python3 tools/devops.py build kernel`。
-- 只改配置：改 `env/kernel/arm64-virt.config`，删掉 `build/kernel/.config` 后
-  重新 `build kernel`。
-- 首次 `init` 会为内核源码建立本地 git 基线（提交整个源码树，约 1~2 分钟）；
-  `KERNEL_GIT=0` 可跳过，但 `kernel` 子命令不可用。
+> 这是正常的。`KERNEL_GIT=0` 可跳过基线，但之后要自己 `git init`。
+> `init` 仍会把 `env/kernel/patches/*.patch` 应用到 `external/linux-*`。
 
 ### busybox 代码
 

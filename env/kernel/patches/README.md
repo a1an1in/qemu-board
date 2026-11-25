@@ -1,16 +1,17 @@
 # env/kernel/patches
 
-`*.patch` 按文件名 0001、0002... 顺序应用，由 `tools/devops.py init`（以及
-`kernel reset`）用 `git am --3way` 打到 `external/linux-<ver>`。
+`*.patch` 按文件名 0001、0002... 顺序应用，由 `tools/devops.py init` 用
+`git am --3way` 打到 `external/linux-<ver>`。
 
-推荐用工具生成：
+生成方式（直接用 git）：
 
 ```sh
-python3 tools/devops.py init          # 首次（会建立 lab-base git 基线）
-python3 tools/devops.py kernel checkout
-vim external/linux-4.9.263/drivers/...
-git -C external/linux-4.9.263 commit -am "my change"
-python3 tools/devops.py kernel patch
+cd external/linux-4.9.263
+git checkout dev
+# 改代码并 commit
+rm -f ../../env/kernel/patches/*.patch
+git format-patch --zero-commit --no-signature --no-numbered --full-index \
+    -o ../../env/kernel/patches lab-base..dev
 ```
 
 也可以把现成的 `git format-patch` 文件放进本目录（文件名决定顺序）。
