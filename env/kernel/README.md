@@ -2,11 +2,38 @@
 
 - 版本由 `lab.conf` 的 `KERNEL_VERSION` 固定，源码从 `KERNEL_URL` 下载并按 `KERNEL_SHA256` 校验。
 - `arm64-virt.config` 是完整 `.config`，`init` 会复制到 `build/kernel/.config`，编译前跑 `olddefconfig`。
-- 目前没有内核代码补丁；如果以后要改内核：
-  1. 建 `env/kernel/patches/`，按 `series` 顺序放置；
-  2. 在 `tools/devops.py` 的 `prepare_kernel()` / `build_kernel()` 里增加
-     `git apply`/`patch -p1` 步骤；
-  3. 仍然保持 `external/linux-*` 干净，方便整体升级。
+- `series/<series>` + `patches/<series>/` 是内核代码补丁队列（默认 `KERNEL_SERIES=base`）。
+- `external/linux-*` 在 `init` 时建立本地 git 基线（`lab-base` 标签），方便看 diff 和生成 patch。
+
+## 改内核代码 → 生成 patch
+
+```sh
+python3 tools/devops.py init           # 首次：建立 lab-base 基线
+python3 tools/devops.py kernel hack    # 切到 lab/work
+vim external/linux-4.9.263/drivers/...
+git -C external/linux-4.9.263 commit -am "my change"
+python3 tools/devops.py kernel export  # → env/kernel/patches/<series>/*.patch + series
+git add env/kernel/patches env/kernel/series
+git commit -m "kernel: my change"
+```
+
+查看改动：
+
+```sh
+python3 tools/devops.py kernel status
+python3 tools/devops.py kernel diff          # stat + 文件列表
+python3 tools/devops.py kernel diff --full   # 完整 diff
+```
+
+验证 recipe 可重建：
+
+```sh
+python3 tools/devops.py kernel reset
+python3 tools/devops.py build kernel
+```
+
+> 首次 `init` 会为内核源码建立一个本地 git 基线（提交整个源码树，约 1~2 分钟）。
+> 不想用可以 `KERNEL_GIT=0 python3 tools/devops.py init` 跳过，但 `kernel` 子命令将不可用；
+> `build kernel` 仍然可用。
 
 内核构建产物在 `build/kernel/`，`modules` 默认 `KDIR=build/kernel`。
-构建：`python3 tools/devops.py build kernel`。

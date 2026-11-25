@@ -22,7 +22,8 @@ python3 tools/devops.py <命令> [选项]
 | `modules` | 编译 `drivers/**` 外部模块。`--kdir`、`--arch`、`--cross-prefix`、`--sparse` |
 | `run` | 启动 QEMU（9p 挂载仓库）。`--qmp`、`--dtb`、`--flash`、`--qemu`、`--kdir`、`--initrd`；`--` 之后可传额外 QEMU 参数 |
 | `verify [子串]` | 依次运行 `tests/*/*/verify_qemu.sh`，可按名字过滤（如 `hwmon`） |
-| `qemu status\|hack\|export\|reset\|rebase <base>` | QEMU 定制工作流；patch 队列是 `env/qemu/patches/<series>/` |
+| `qemu status\|diff\|hack\|export\|reset\|rebase <base>` | QEMU 定制工作流；patch 队列是 `env/qemu/patches/<series>/` |
+| `kernel status\|diff\|hack\|export\|reset` | 内核定制工作流；`external/linux-*` 有本地 `lab-base` git 基线，patch 队列是 `env/kernel/patches/<series>/` |
 | `clean [modules\|env\|all]` | 清模块产物 / `build/` / `build/+external/`；非交互环境需 `--yes` |
 | `status` | 查看版本、路径、产物和 QEMU 分支状态 |
 | `list` | 列出会被构建的模块目录 |
@@ -41,6 +42,8 @@ python3 tools/devops.py <命令> [选项]
 | `BUSYBOX_SRC` / `BUSYBOX_BUILD` | `external/busybox-<ver>` / `build/busybox` | busybox |
 | `KDIR` | `build/kernel` | 编外部模块用的内核树 |
 | `QEMU_SERIES` | `base` | `env/qemu/series/<name>` |
+| `KERNEL_SERIES` | `base` | `env/kernel/series/<name>` |
+| `KERNEL_GIT` | `1` | 设为 `0` 跳过内核 git 基线（`kernel` 子命令不可用） |
 | `JOBS` / `ARCH` / `CROSS_COMPILE` | `nproc` / `arm64` / `aarch64-linux-gnu-` | 编译参数 |
 | `QEMU` / `INITRD` / `KMODS_ROOT` / `QMP_SOCK` | 由 recipe 推导 | `run` 覆盖 |
 
@@ -52,7 +55,32 @@ python3 tools/devops.py <命令> [选项]
 |---|---|---|---|
 | 驱动 / 测试 / 文档 | `drivers/ test/ doc/`（本仓库） | `git add` + `git commit` | 不需要；正常 git 提交即可 |
 | QEMU 设备模型 / virt 板级 | `external/qemu`（临时工作区） | `qemu export` → `env/qemu/patches/<series>/` | **需要**，patch 才是长期真相 |
-| 内核代码 / busybox 代码 | `external/linux-*` / `external/busybox-*` | 目前只支持配置；代码补丁需在 `env/*/patches/` 加队列并在 `devops.py` 里应用 | 需要（当前未内置） |
+| 内核代码 | `external/linux-*`（本地 git 基线） | `kernel export` → `env/kernel/patches/<series>/` | **需要** |
+| busybox 代码 | `external/busybox-*` | 目前只支持配置/overlay；代码补丁需自己加队列 | 需要时再加 |
+
+### 看改动了什么
+
+```sh
+python3 tools/devops.py qemu status        # base/series/分支/最近提交/是否脏
+python3 tools/devops.py qemu diff          # 相对基线的 stat + 文件列表
+python3 tools/devops.py qemu diff --full   # 完整 diff
+
+python3 tools/devops.py kernel status
+python3 tools/devops.py kernel diff
+python3 tools/devops.py kernel diff --full
+```
+
+也可以直接用 git（`external/qemu` 是完整仓库，`external/linux-*` 在 `init` 后也有
+`lab-base`/`lab/work`）：
+
+```sh
+git -C external/qemu log --oneline lab/work
+git -C external/qemu diff b428fe036233..lab/work -- hw/arm/virt.c
+
+git -C external/linux-4.9.263 status
+git -C external/linux-4.9.263 diff lab-base..lab/work
+git -C external/linux-4.9.263 log --oneline lab-base..lab/work
+```
 
 ### QEMU：改代码 → 导出补丁
 
@@ -102,14 +130,32 @@ git commit -m "chardev_i2c_tmp105: ..."
 驱动源码本来就在总仓里，不需要 `env/` patch；如果要给内核上游发补丁，再用标准
 `git format-patch -1 HEAD` 生成邮件补丁。
 
-### 内核 / busybox 代码
+### 内核：改代码 → 导出补丁
 
-- 只改配置：改 `env/kernel/arm64-virt.config` 或 `env/busybox/busybox.config`，
-  删掉 `build/*/.config` 后重新 `build kernel|busybox`。
-- 改源码：`external/` 是可重建的，不能作为长期保存位置。建议在
-  `env/kernel/patches/`（或 `env/busybox/patches/`）建 patch 队列，并在
-  `tools/devops.py` 的 `prepare_kernel()` / `build_busybox()` 里用
-  `git apply`/`patch -p1` 应用；当前 recipe 还没有内置这一步，需要时再加。
+```sh
+python3 tools/devops.py init           # 首次：建立 lab-base 基线
+python3 tools/devops.py kernel hack    # 切到 external/linux-* 的 lab/work
+vim external/linux-4.9.263/drivers/...
+git -C external/linux-4.9.263 commit -am "my change"
+python3 tools/devops.py kernel export  # 重写 env/kernel/patches/<series> 和 series
+git add env/kernel/patches env/kernel/series
+git commit -m "kernel: my change"
+```
+
+- `kernel export` 生成 `git format-patch --zero-commit` 格式，`init` / `kernel reset`
+  会用 `git am --3way` 重放。
+- 验证：`python3 tools/devops.py kernel reset && python3 tools/devops.py build kernel`。
+- 只改配置：改 `env/kernel/arm64-virt.config`，删掉 `build/kernel/.config` 后
+  重新 `build kernel`。
+- 首次 `init` 会为内核源码建立本地 git 基线（提交整个源码树，约 1~2 分钟）；
+  `KERNEL_GIT=0` 可跳过，但 `kernel` 子命令不可用。
+
+### busybox 代码
+
+- 只改配置/overlay：改 `env/busybox/busybox.config` 或 `rootfs-overlay/`，
+  然后 `build busybox` + `build initramfs`。
+- 改源码：目前 recipe 只内置了配置/overlay，没有 busybox patch 队列；需要时按
+  `env/kernel/` 的模式补 `patches/`/`series/` 并在 `build_busybox()` 里应用。
 
 ## 示例
 

@@ -1,0 +1,2 @@
+# 内核 patch 顺序（相对 env/kernel/patches/<series>/），一行一个文件名。
+# 空文件表示当前内核没有代码补丁；用 `python3 tools/devops.py kernel export` 生成。
