@@ -10,7 +10,7 @@
 .tmp_*.o
 *.d
 
-# 实验环境：源码树与构建产物（由 make env 按 recipe 重建）
+# 实验环境：源码树与构建产物（由 python3 tools/devops.py init/build 重建）
 /external/
 /build/
 

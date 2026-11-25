@@ -11,8 +11,9 @@ libobject 只做用户态（UIO/VFIO/I2C/SPI/MTD 等），内核态的驱动/模
 > 新增驱动只碰 4 处（`drivers/` + `doc/` + `tests/` + 本 README 的清单/进度）。
 >
 > 本仓库同时自带 QEMU / 内核 / busybox 的 **recipe**（`env/`）：源码按版本 pin
-> 还原到 `external/`，产物在 `build/`，两者都不进 git。新机器 `make doctor && make env`
-> 即可还原整套实验台，详见 [实验环境与构建](doc/环境与构建.md)。
+> 还原到 `external/`，产物在 `build/`，两者都不进 git。新机器执行
+> `python3 tools/devops.py doctor`、`init`、`build` 即可还原整套实验台，
+> 详见 [实验环境与构建](doc/环境与构建.md)。
 
 ## 驱动清单
 
@@ -115,15 +116,17 @@ linux-kmods/
 │       └── spi-flash/                   #    SPI 字符设备：/dev/spidevB.C（= 标准 spidev ABI）
 │           ├── Kbuild                   #    obj-m := chardev_spi_flash.o
 │           └── chardev_spi_flash.c          #    spi_driver + cdev（与内核 spidev 互斥）
-├── scripts/                             # 通用工具（与具体驱动无关）
-│   ├── bootstrap.sh                     #   还原 recipe：下载/解包/浅拉 QEMU + patch
-│   ├── build_env.sh                     #   编 QEMU / 内核 / busybox / initramfs
-│   ├── pack_initramfs.sh                #   busybox + overlay + 设备节点 → cpio.gz
-│   ├── qemu_hack.sh                     #   QEMU 改动 / 导出 patch / 换基线
-│   ├── build.sh                         #   递归构建 / clean / checkpatch / sparse
-│   ├── run_qemu.sh                      #   起 QEMU（含 QMP_SOCK 开关）+ 9p 挂载
-│   ├── common.sh                        #   路径 / 日志 / patch 队列公共函数
+├── scripts/                             # 兼容入口（实际实现都在 tools/devops.py）
+│   ├── bootstrap.sh                     #   → tools/devops.py init
+│   ├── build_env.sh                     #   → tools/devops.py build
+│   ├── pack_initramfs.sh                #   → tools/devops.py build initramfs
+│   ├── qemu_hack.sh                     #   → tools/devops.py qemu
+│   ├── build.sh                         #   → tools/devops.py modules/checkpatch
+│   ├── run_qemu.sh                      #   → tools/devops.py run
 │   └── qmp_dev.py                       #   通用 QMP 工具：--match <设备> 定位，get/set 任意属性
+├── tools/
+│   ├── devops.py                        # ★ 唯一入口：doctor/init/build/modules/run/verify/qemu/clean
+│   └── README.md
 ├── tests/                               # ← 与 drivers/ 同构（子系统/<总线>-<器件>）
 │   ├── hwmon/i2c-tmp105/
 │   │   ├── read_hwmon.sh                #   客户机内自检（找 name=tmp105 → 校验 temp1_*）
@@ -157,34 +160,35 @@ linux-kmods/
 
 ## 构建与验证
 
+统一入口：**`python3 tools/devops.py <命令>`**（Windows 用 `python tools/devops.py`，
+会自动转交 WSL；Linux/WSL/macOS 直接执行）。
+
 首次（新电脑）：
 
 ```sh
-make doctor                            # 检查 git / aarch64-gcc / ninja / glib / pixman / cpio
-make env                               # 按 recipe 还原 + 全量编译（QEMU/内核/busybox/initramfs）
+python3 tools/devops.py doctor      # 检查 git/gcc/aarch64-gcc/ninja/glib/pixman/bc...
+python3 tools/devops.py init       # 按 recipe 下载/解包源码 + 打 QEMU patch
+python3 tools/devops.py build      # 全量编译 QEMU/内核/busybox/initramfs
 ```
 
 日常：
 
 ```sh
-make                                   # 递归构建 drivers/**（KDIR=build/kernel + aarch64 交叉编译）
-make list                              # 只列出会被构建的模块目录
-make clean
-./scripts/build.sh checkpatch          # 内核树 checkpatch 自检（当前 0 errors / 0 warnings）
-
-make run                               # 起 QEMU（9p 挂载本仓库到 /mnt）
-QMP_SOCK=/tmp/tmp105.sock make run     # 手动调试（宿主侧用 qmp_dev.py 改温度）
-make verify                            # 依次跑 4 个 tests/*/*/verify_qemu.sh
-
-make env-qemu / env-kernel / env-busybox / env-initramfs   # 只重建某一部分
-make env-qemu-hack / env-qemu-export / env-qemu-status     # 改 QEMU 的流程
-make env-distclean                     # 删除 build/ 与 external/（可重建）
-
-make KDIR=/lib/modules/$(uname -r)/build ARCH=x86_64 CROSS_COMPILE=   # 编本机内核模块
+python3 tools/devops.py modules              # 编 drivers/**（KDIR=build/kernel）
+python3 tools/devops.py build qemu           # 只编 QEMU（增量）
+python3 tools/devops.py build kernel         # 只编内核 Image + modules
+python3 tools/devops.py build initramfs      # 只重打 initramfs
+python3 tools/devops.py run                  # 起 QEMU（9p 挂载本仓库到 /mnt）
+python3 tools/devops.py run --qmp /tmp/tmp105.sock   # 手动调试（配合 scripts/qmp_dev.py）
+python3 tools/devops.py verify               # 跑 4 个 tests/*/*/verify_qemu.sh
+python3 tools/devops.py verify hwmon         # 只跑名字含 hwmon 的测试
+python3 tools/devops.py qemu status|hack|export|reset|rebase   # QEMU 改动流程
+python3 tools/devops.py clean env|all --yes  # 删除 build/ 或 build/+external/
+python3 tools/devops.py status               # 看版本/路径/产物
 ```
 
-环境细节（recipe 模型、改 QEMU、升级上游、常见问题）见
-[实验环境与构建](doc/环境与构建.md)。
+更详细的命令、环境变量与 QEMU 改动流程见 [tools/README.md](tools/README.md) 和
+[实验环境与构建](doc/环境与构建.md)。`make` 的旧 target 仍然可用（薄封装到 `tools/devops.py`）。
 
 ## 新增一个驱动（4 步）
 
@@ -195,6 +199,7 @@ make KDIR=/lib/modules/$(uname -r)/build ARCH=x86_64 CROSS_COMPILE=   # 编本�
 
 ## 文档
 
+- [tools/README.md](tools/README.md) —— **唯一入口 devops.py**：子命令、环境变量、Windows/WSL 说明
 - [实验环境与构建](doc/环境与构建.md) —— **recipe 模型**：env/external/build 边界、新电脑三条命令、QEMU 改动与换基线流程、内核/busybox/initramfs 重建、常见问题
 - [开发规范](doc/开发规范.md) —— 目录/命名规则（含反例）、新增驱动 4 步、编码风格（checkpatch 0/0）、许可、日志、错误处理、提交与验收
 - [hwmon_i2c_tmp105 设计文档](doc/hwmon/i2c-tmp105/设计文档.md) —— 器件规约 / 架构选择 / 驱动设计 / 设备侧配置 / 4 层测试 / 里程碑 / **§12 实测结论**

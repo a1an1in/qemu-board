@@ -1,8 +1,8 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 #
-# 重新生成 64M pflash 镜像（可选，不跑 run_qemu.sh 的 FLASH= 就不需要）。
-# 产物在 build/flash.img；用时：FLASH=build/flash.img make run
+# 重新生成 64M pflash 镜像（可选，不跑 run 的 --flash 就不需要）。
+# 产物在 build/flash.img；用时：python3 tools/devops.py run --flash build/flash.img
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

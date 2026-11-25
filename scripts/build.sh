@@ -1,59 +1,32 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
-#
-# 交叉编译封装（设计文档 §8.1）
+# 兼容入口：模块/检查命令已统一到 tools/devops.py
 #
 #   ./scripts/build.sh                 # 编译所有模块
 #   ./scripts/build.sh clean           # 清理产物
-#   ./scripts/build.sh checkpatch      # 对所有 .c 跑内核树里的 checkpatch
-#   ./scripts/build.sh sparse          # 带 C=2 编译（需要系统装了 sparse）
-#
-# 可用环境变量覆盖：
-#   KDIR=/path/to/linux-tree  ARCH=arm64  CROSS_COMPILE=aarch64-linux-gnu-
-set -e
-
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-# shellcheck source=common.sh
-. "$ROOT/scripts/common.sh"
-
-KDIR=${KDIR:-$KERNEL_BUILD}
-ARCH=${ARCH:-arm64}
-CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
-KSRC=${KERNEL_SRC:-$KDIR}
-
-KBUILD_FLAGS=(-C "$KDIR" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE")
+#   ./scripts/build.sh checkpatch      # checkpatch
+#   ./scripts/build.sh sparse          # sparse（C=2）
+set -euo pipefail
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PY=${PYTHON:-python3}
 MODE=${1:-modules}
+shift || true
 
 case "$MODE" in
 modules)
-	make -C "$ROOT" KDIR="$KDIR" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE"
+	exec "$PY" "$ROOT/tools/devops.py" modules "$@"
 	;;
 clean)
-	make -C "$ROOT" clean KDIR="$KDIR" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE"
-	;;
-sparse)
-	make -C "$ROOT" KDIR="$KDIR" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE" \
-		"KBUILD_FLAGS=${KBUILD_FLAGS[*]} C=2" 2>/dev/null ||
-	# 顶层 make 没定义 C=2 的入口，逐模块目录做；模块目录按 Kbuild 递归发现
-	# （与顶层 Makefile 同一套规则：drivers/<子系统>/<总线>-<器件>/）
-		for d in $(find "$ROOT/drivers" -name Kbuild -printf '%h\n' 2>/dev/null | sort); do
-			make "${KBUILD_FLAGS[@]}" M="$d" C=2 modules
-		done
+	exec "$PY" "$ROOT/tools/devops.py" clean modules --yes "$@"
 	;;
 checkpatch)
-	if [ ! -x "$KSRC/scripts/checkpatch.pl" ]; then
-		echo "找不到 $KSRC/scripts/checkpatch.pl" >&2
-		exit 1
-	fi
-	# 排除 kbuild 生成的文件（*.mod.c 等），只检查我们手写的源码
-	files=$(find "$ROOT/drivers" \( -name '*.c' -o -name '*.h' \) \
-		! -name '*.mod.c' ! -path '*/.tmp_versions/*' | sort)
-	[ -n "$files" ] || { echo "没有可检查的源文件"; exit 1; }
-	# shellcheck disable=SC2086
-	"$KSRC/scripts/checkpatch.pl" --no-tree --strict -f $files
+	exec "$PY" "$ROOT/tools/devops.py" checkpatch "$@"
+	;;
+sparse)
+	exec "$PY" "$ROOT/tools/devops.py" modules --sparse "$@"
 	;;
 *)
-	sed -n '2,13p' "$0"
+	sed -n '2,10p' "$0"
 	exit 1
 	;;
 esac

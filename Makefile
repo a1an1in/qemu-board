@@ -1,34 +1,26 @@
 # SPDX-License-Identifier: GPL-2.0
 #
-# linux-kmods 顶层 Makefile
-#   1) 递归发现 drivers/**/Kbuild 做外部模块构建
-#   2) 管理实验环境 recipe：QEMU / 内核 / busybox / initramfs
+# linux-kmods 顶层 Makefile —— 薄封装，实际实现统一在 tools/devops.py
 #
-# 环境（首次）：
-#   make env              # 下载/解包源码 + 打 QEMU patch
-#   make env-build        # 编译 QEMU + 内核 + busybox + initramfs
+# 推荐直接使用 Python 入口（跨平台，Windows 下会自动转交 WSL）：
+#   python3 tools/devops.py doctor
+#   python3 tools/devops.py init
+#   python3 tools/devops.py build
+#   python3 tools/devops.py modules
+#   python3 tools/devops.py run
+#   python3 tools/devops.py verify
+#   python3 tools/devops.py qemu status|hack|export|reset|rebase
 #
-# 日常：
-#   make                  # 默认 KDIR=build/kernel，arm64 交叉编译
-#   make KDIR=/lib/modules/$(uname -r)/build ARCH=x86_64 CROSS_COMPILE=   # 编本机
-#   make run QMP_SOCK=/tmp/tmp105.sock
-#   make verify
-#   make clean            # 清理模块产物
-#   make env-distclean    # 删除 build/ 和 external/（可重建）
-#
-# 目录/命名规则见 doc/开发规范.md：
-#   drivers/<子系统>/<总线>-<器件>/{Kbuild,<子系统>_<总线>_<器件>.c}
-# 新增驱动只要按规则建目录（含 Kbuild），本文件无需修改（递归发现，任意嵌套深度）。
+# 本文件保留 make 兼容入口，所有 target 都转调 tools/devops.py。
+
+PYTHON		?= python3
+DEVOPS		:= $(PYTHON) $(CURDIR)/tools/devops.py
 
 KDIR		?= $(CURDIR)/build/kernel
 ARCH		?= arm64
 CROSS_COMPILE	?= aarch64-linux-gnu-
 JOBS		?= $(shell nproc 2>/dev/null || echo 4)
 
-PWD		:= $(shell pwd)
-KBUILD_FLAGS	:= -C $(KDIR) ARCH=$(ARCH) CROSS_COMPILE=$(CROSS_COMPILE)
-
-# 递归发现所有模块目录：任何包含 Kbuild 的目录都当作一个模块单元
 MODULE_DIRS	:= $(shell find drivers -name Kbuild -printf '%h\n' 2>/dev/null | sort)
 
 .PHONY: all modules clean list help \
@@ -40,80 +32,68 @@ MODULE_DIRS	:= $(shell find drivers -name Kbuild -printf '%h\n' 2>/dev/null | so
 all: modules
 
 modules:
-	@if [ -z "$(MODULE_DIRS)" ]; then \
-		echo "找不到任何模块目录（drivers/**/Kbuild）"; exit 1; \
-	fi
-	@for d in $(MODULE_DIRS); do \
-		echo "=== 构建 $$d ==="; \
-		$(MAKE) $(KBUILD_FLAGS) M=$(PWD)/$$d modules || exit 1; \
-	done
+	@$(DEVOPS) modules --kdir "$(KDIR)" --arch "$(ARCH)" \
+		--cross-prefix "$(CROSS_COMPILE)" --jobs $(JOBS)
 
 clean:
-	@for d in $(MODULE_DIRS); do \
-		$(MAKE) $(KBUILD_FLAGS) M=$(PWD)/$$d clean; \
-	done
+	@$(DEVOPS) clean modules --yes --kdir "$(KDIR)"
 
 list:
-	@echo "$(MODULE_DIRS)" | tr ' ' '\n'
+	@$(DEVOPS) list
 
 # ---- 实验环境 recipe ----
 
 env: env-build
 
 env-fetch:
-	@$(CURDIR)/scripts/bootstrap.sh
+	@$(DEVOPS) init
 
 env-build: env-fetch
-	@$(CURDIR)/scripts/build_env.sh --jobs $(JOBS) all
+	@$(DEVOPS) build all --jobs $(JOBS)
 
 env-qemu:
-	@$(CURDIR)/scripts/build_env.sh --jobs $(JOBS) qemu
+	@$(DEVOPS) build qemu --jobs $(JOBS)
 
 env-kernel:
-	@$(CURDIR)/scripts/build_env.sh --jobs $(JOBS) kernel
+	@$(DEVOPS) build kernel --jobs $(JOBS)
 
 env-busybox:
-	@$(CURDIR)/scripts/build_env.sh busybox
+	@$(DEVOPS) build busybox --jobs $(JOBS)
 
 env-initramfs:
-	@$(CURDIR)/scripts/build_env.sh initramfs
+	@$(DEVOPS) build initramfs
 
 run:
-	@$(CURDIR)/scripts/run_qemu.sh
+	@$(DEVOPS) run
 
 verify:
-	@set -e; for t in $(CURDIR)/tests/*/*/verify_qemu.sh; do \
-		echo; echo "=== $$t ==="; "$$t"; \
-	done
+	@$(DEVOPS) verify
 
 doctor:
-	@$(CURDIR)/scripts/bootstrap.sh --check
+	@$(DEVOPS) doctor
 
 env-qemu-hack:
-	@$(CURDIR)/scripts/qemu_hack.sh hack
+	@$(DEVOPS) qemu hack
 
 env-qemu-export:
-	@$(CURDIR)/scripts/qemu_hack.sh export
+	@$(DEVOPS) qemu export
 
 env-qemu-reset:
-	@$(CURDIR)/scripts/qemu_hack.sh reset
+	@$(DEVOPS) qemu reset
 
 env-qemu-rebase:
-	@$(CURDIR)/scripts/qemu_hack.sh rebase $(BASE)
+	@$(DEVOPS) qemu rebase $(BASE)
 
 env-qemu-status:
-	@$(CURDIR)/scripts/qemu_hack.sh status
+	@$(DEVOPS) qemu status
 
 env-distclean:
-	@echo "删除 build/ 与 external/（可由 make env 重建）"
-	rm -rf "$(CURDIR)/build" "$(CURDIR)/external"
+	@$(DEVOPS) clean all --yes
 
 help:
-	@echo "模块构建："
-	@echo "  make [KDIR=<内核树>] [ARCH=<arch>] [CROSS_COMPILE=<前缀>]"
-	@echo "发现到的模块目录:"; $(MAKE) -s list
+	@echo "推荐：python3 tools/devops.py <命令>（Windows 用 python tools/devops.py）"
+	@echo "  doctor / init / build [all|qemu|kernel|busybox|initramfs] / modules"
+	@echo "  run / verify / qemu status|hack|export|reset|rebase / clean / status / list"
 	@echo
-	@echo "实验环境："
-	@echo "  make env / env-build / env-qemu / env-kernel / env-busybox / env-initramfs"
-	@echo "  make run [QMP_SOCK=/tmp/x.sock] / verify / doctor"
-	@echo "  make env-qemu-hack|export|reset|status / env-distclean"
+	@echo "make 兼容 target：env / env-build / run / verify / doctor / modules / clean"
+	@echo "发现到的模块目录:"; $(DEVOPS) list
