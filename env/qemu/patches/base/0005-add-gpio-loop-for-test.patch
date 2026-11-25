@@ -1,0 +1,25 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: a1an1in <a1an1in@sina.com>
+Date: Tue, 11 Aug 2026 10:49:52 +0800
+Subject: [PATCH 5/5] add gpio loop for test
+
+---
+ hw/arm/virt.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 55fb943b31..b7f83418f8 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -1881,6 +1881,11 @@ static void create_gpio_devices(const VirtMachineState *vms, int gpio,
+ 
+     /* Child gpio devices */
+     if (gpio == VIRT_GPIO) {
++        /* Loop back PL061 line 0 (guest drives as output) to line 1 (guest
++         * listens as input): toggling line 0 generates rising/falling edges
++         * on line 1, so the guest can trigger & verify GPIO edge events.
++         * (test_gpio_event uses two Gpio objects on gpiochip0.) */
++        qdev_connect_gpio_out(pl061_dev, 0, qdev_get_gpio_in(pl061_dev, 1));
+         create_gpio_keys(ms->fdt, pl061_dev, phandle);
+     } else {
+         create_secure_gpio_pwr(ms->fdt, pl061_dev, phandle);

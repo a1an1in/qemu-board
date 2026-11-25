@@ -10,6 +10,10 @@
 .tmp_*.o
 *.d
 
+# 实验环境：源码树与构建产物（由 make env 按 recipe 重建）
+/external/
+/build/
+
 # verify_qemu.sh 在 9p 共享目录里放客户机回写的中间结果（跑完会自删）
 .verify/
 

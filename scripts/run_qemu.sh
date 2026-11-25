@@ -1,51 +1,47 @@
 #!/bin/bash
 # SPDX-License-Identifier: GPL-2.0
 #
-# 启动 QEMU（arm64 virt + busybox initramfs）做 tmp105 驱动的上机验证。
+# 启动 QEMU（arm64 virt + busybox initramfs）做驱动上机验证。
 #
-# 前置结论（已核实，见设计文档 §7、§11.1）：
-#   自研 QEMU（/home/alan/workspace/qemu）的 virt 机器在 create_i2c() 里
-#   已经内置了 tmp105@0x48，并且**自动生成的 FDT** 里带了
-#       /i2c@9060000/tmp105@48 { compatible = "ti,tmp105"; reg = <0x48>; }
-#   所以本脚本默认**不传 -dtb** —— 让 QEMU 自己生成 FDT，tmp105 节点才是全的。
-#   若必须传 -dtb：virt_custom.dtb 里**没有** tmp105 节点，probe 不会触发；
-#   需要把下面这段加进 virt_custom.dts 再 dtc 重新生成：
+# 默认路径全部来自 recipe / build/，也可以用环境变量覆盖：
+#   QEMU=/path/qemu-system-aarch64  KDIR=/path/kernel-build
+#   INITRD=/path/initramfs.cpio.gz  KMODS_ROOT=/path/linux-kmods
 #
-#       i2c@9060000 {
-#               /* ...原有属性不变... */
-#               eeprom@50 { compatible = "atmel,24c02"; reg = <0x50>; };
-#               tmp105@48 { compatible = "ti,tmp105"; reg = <0x48>; };
-#       };
+# 前置结论（见 doc/hwmon/i2c-tmp105/设计文档.md §7、§11.1）：
+#   自研 QEMU 的 virt 机器已内置 i2c@9060000/tmp105@48 等设备，并自动生成 FDT。
+#   所以默认**不传 -dtb**；只有需要自备 DTB 时才设置 DTB=...
 #
 # 进入客户机后：
+#   mount -t 9p -o trans=virtio,version=9p2000.L kmods /mnt
 #   insmod /mnt/drivers/hwmon/i2c-tmp105/hwmon_i2c_tmp105.ko
 #   sh /mnt/tests/hwmon/i2c-tmp105/read_hwmon.sh
 #
-# 动态改温度（验证"不是读死值"）两种方式：
-#   A) 带 QMP socket 启动，在**另开一个宿主终端**里用现成脚本：
+# 动态改温度（两种方式）：
+#   A) 带 QMP socket 启动，在另一个宿主终端：
 #        QMP_SOCK=/tmp/tmp105.sock ./scripts/run_qemu.sh
-#        python3 scripts/qmp_dev.py /tmp/tmp105.sock find --match tmp105
-#        python3 scripts/qmp_dev.py /tmp/tmp105.sock set  --match tmp105 --value -6000
-#        python3 scripts/qmp_dev.py /tmp/tmp105.sock get  --match tmp105
-#        python3 scripts/qmp_dev.py /tmp/tmp105.sock hmp 'info status'   # 跑 monitor 命令
-#   B) 在 QEMU 里按 Ctrl-A c 切到 monitor（路径可从 A 的脚本输出拿到）：
-#        (qemu) qom-get /machine/unattached/device[10] temperature
+#        python3 scripts/qmp_dev.py /tmp/tmp105.sock set --match tmp105 --value -6000
+#        python3 scripts/qmp_dev.py /tmp/tmp105.sock get --match tmp105
+#   B) 串口里 Ctrl-A c 切 monitor：
 #        (qemu) qom-set /machine/unattached/device[10] temperature -6000
-#      再按 Ctrl-A c 切回串口，重新 cat temp1_input。
+#      再 Ctrl-A c 切回。
 #
-# 完整手动步骤（含阈值/报警/反复加载/反向用例）见 doc/手动测试指南.md。
-set -e
+# 完整手动步骤见 doc/<子系统>/<器件>/手动测试指南.md。
+set -euo pipefail
 
-QEMU=${QEMU:-/home/alan/workspace/qemu/build/qemu-system-aarch64}
-KDIR=${KDIR:-/home/alan/workspace/linux-4.9.263}
-INITRD=${INITRD:-/home/alan/workspace/busybox-1.33.1/initramfs.cpio.gz}
-KMODS_ROOT=${KMODS_ROOT:-/home/alan/workspace/linux-kmods}
-DTB=${DTB:-}          # 留空 → 用 QEMU 自生成 FDT（含 tmp105 节点）
-FLASH=${FLASH:-}      # 需要 pflash 时：/home/alan/workspace/qemu_virt_machine/flash.img
-QMP_SOCK=${QMP_SOCK:-}  # 非空则额外开 QMP（例 QMP_SOCK=/tmp/tmp105.sock）
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck source=common.sh
+. "$ROOT/scripts/common.sh"
 
-[ -x "$QEMU" ] || { echo "找不到 QEMU：$QEMU" >&2; exit 1; }
-[ -f "$KDIR/arch/arm64/boot/Image" ] || { echo "找不到内核 Image" >&2; exit 1; }
+QEMU=${QEMU:-$QEMU_BIN}
+KDIR=${KDIR:-$KERNEL_BUILD}
+KMODS_ROOT=${KMODS_ROOT:-$LAB_ROOT}
+DTB=${DTB:-}
+FLASH=${FLASH:-}
+QMP_SOCK=${QMP_SOCK:-}
+
+[ -x "$QEMU" ] || die "找不到 QEMU：$QEMU（先 make env-qemu 或设置 QEMU=）"
+[ -f "$KDIR/arch/arm64/boot/Image" ] || die "找不到内核 Image：$KDIR/arch/arm64/boot/Image（先 make env-kernel）"
+[ -f "$INITRD" ] || die "找不到 initramfs：$INITRD（先 make env-initramfs）"
 
 args=(
 	-M virt
@@ -60,12 +56,8 @@ args=(
 
 [ -n "$DTB" ] && args+=(-dtb "$DTB")
 [ -n "$FLASH" ] && args+=(-drive "file=$FLASH,if=pflash,index=1,format=raw")
-# QMP：QEMU Machine Protocol（JSON over unix socket），用来在"宿主另一个终端"里
-# 发 qom-set/qom-get 改/读器件属性（这里就是 tmp105 的 temperature）。
-#   server = 以服务端监听；nowait = 不等客户端就连上
-# 不设 QMP_SOCK 也能改温度，只是要按 Ctrl-A c 切到 monitor 手工敲 HMP 命令。
 if [ -n "$QMP_SOCK" ]; then
-	rm -f "$QMP_SOCK"		# 清掉上次可能残留的 socket 文件
+	rm -f "$QMP_SOCK"
 	args+=(-qmp "unix:$QMP_SOCK,server,nowait")
 fi
 

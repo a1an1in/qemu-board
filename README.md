@@ -9,6 +9,10 @@ libobject 只做用户态（UIO/VFIO/I2C/SPI/MTD 等），内核态的驱动/模
 > 目录与命名规则见 [开发规范](doc/开发规范.md)：**目录按子系统分、叶目录按
 > `<总线>-<器件>` 起、主文件名与模块名按 `<子系统>_<总线>_<器件>` 起** ——
 > 新增驱动只碰 4 处（`drivers/` + `doc/` + `tests/` + 本 README 的清单/进度）。
+>
+> 本仓库同时自带 QEMU / 内核 / busybox 的 **recipe**（`env/`）：源码按版本 pin
+> 还原到 `external/`，产物在 `build/`，两者都不进 git。新机器 `make doctor && make env`
+> 即可还原整套实验台，详见 [实验环境与构建](doc/环境与构建.md)。
 
 ## 驱动清单
 
@@ -69,7 +73,7 @@ libobject 只做用户态（UIO/VFIO/I2C/SPI/MTD 等），内核态的驱动/模
   - 实测 QOM 路径：`/machine/unattached/device[10]`（用通用的 `scripts/qmp_dev.py --match tmp105` 自动定位，别写死）
   - 上电默认 `CONFIG=0` → **R1:R0=00 → 9 位有效（0.5 °C 步进）**：`qom-set -6250` 读回 `-6500`（§12.1）
 - **换算**：`m°C = (int16_t)raw * 1000 / 256`（raw = 寄存器 0x00 两字节，大端）
-- **内核树**：`/home/alan/workspace/linux-4.9.263`（arm64，已配置并编译，可直接做外部模块构建）
+- **内核树**：`build/kernel`（由 recipe 从 `external/linux-4.9.263` 构建；arm64，已配置并编译，可直接做外部模块构建）
 - **注意**：4.9 的 `hwmon.h` 没有 `HWMON_CHANNEL_INFO()` 宏，必须手写 `hwmon_channel_info`（§12.1）
 
 ## 目录结构
@@ -77,8 +81,23 @@ libobject 只做用户态（UIO/VFIO/I2C/SPI/MTD 等），内核态的驱动/模
 ```
 linux-kmods/
 ├── README.md                          # 本文件：驱动清单 / 进度 / 结构 / 构建验证
-├── Makefile                           # 递归发现 drivers/**/Kbuild（新增驱动不用改它）
-├── .gitignore
+├── Makefile                           # 递归发现 drivers/**/Kbuild + 实验环境 target
+├── lab.conf                           # recipe：内核/busybox 版本与 sha256、QEMU base
+├── .gitignore                         # external/、build/ 不进 git
+├── env/                                 # ← 进 git 的"配方"
+│   ├── qemu/
+│   │   ├── configure.args              #   configure 参数
+│   │   ├── patches/base/               #   6 个自研 virt 补丁
+│   │   └── series/base                 #   补丁顺序
+│   ├── kernel/
+│   │   ├── arm64-virt.config           #   完整 .config
+│   │   └── README.md
+│   ├── busybox/
+│   │   ├── busybox.config
+│   │   └── rootfs-overlay/etc/         #   inittab / fstab / init.d/rcS
+│   └── virt/                           #   可选 DTB / flash.img 生成脚本
+├── external/                            # ← 不进 git：按 recipe 还原的源码树
+├── build/                               # ← 不进 git：QEMU/内核/busybox/initramfs 产物
 ├── drivers/                             # ← 一级按子系统分（与内核树 drivers/ 顶层同层次）
 │   ├── hwmon/
 │   │   └── i2c-tmp105/                  # ← 叶目录 = <总线>-<器件>
@@ -97,8 +116,13 @@ linux-kmods/
 │           ├── Kbuild                   #    obj-m := chardev_spi_flash.o
 │           └── chardev_spi_flash.c          #    spi_driver + cdev（与内核 spidev 互斥）
 ├── scripts/                             # 通用工具（与具体驱动无关）
+│   ├── bootstrap.sh                     #   还原 recipe：下载/解包/浅拉 QEMU + patch
+│   ├── build_env.sh                     #   编 QEMU / 内核 / busybox / initramfs
+│   ├── pack_initramfs.sh                #   busybox + overlay + 设备节点 → cpio.gz
+│   ├── qemu_hack.sh                     #   QEMU 改动 / 导出 patch / 换基线
 │   ├── build.sh                         #   递归构建 / clean / checkpatch / sparse
 │   ├── run_qemu.sh                      #   起 QEMU（含 QMP_SOCK 开关）+ 9p 挂载
+│   ├── common.sh                        #   路径 / 日志 / patch 队列公共函数
 │   └── qmp_dev.py                       #   通用 QMP 工具：--match <设备> 定位，get/set 任意属性
 ├── tests/                               # ← 与 drivers/ 同构（子系统/<总线>-<器件>）
 │   ├── hwmon/i2c-tmp105/
@@ -133,19 +157,34 @@ linux-kmods/
 
 ## 构建与验证
 
+首次（新电脑）：
+
 ```sh
-make                                   # 递归构建 drivers/**（默认内核树 + aarch64 交叉编译）
+make doctor                            # 检查 git / aarch64-gcc / ninja / glib / pixman / cpio
+make env                               # 按 recipe 还原 + 全量编译（QEMU/内核/busybox/initramfs）
+```
+
+日常：
+
+```sh
+make                                   # 递归构建 drivers/**（KDIR=build/kernel + aarch64 交叉编译）
 make list                              # 只列出会被构建的模块目录
 make clean
 ./scripts/build.sh checkpatch          # 内核树 checkpatch 自检（当前 0 errors / 0 warnings）
 
-tests/hwmon/i2c-tmp105/verify_qemu.sh      # 一键端到端：编译 + 起 QEMU + 13 项断言
-tests/chardev/i2c-tmp105/verify_qemu.sh    # 一键端到端（含交叉编译 ioctl_test）+ 18 项断言
-tests/chardev/spi-flash/verify_qemu.sh     # 一键端到端（互斥/unbind/insmod，含交叉编译 spidev_test）+ 22 项断言
-tests/iio/i2c-tmp105/verify_qemu.sh        # 一键端到端：编译 + 起 QEMU + 17 项断言（raw+scale）
-QMP_SOCK=/tmp/tmp105.sock ./scripts/run_qemu.sh   # 手动调试（客户机里 insmod/测试见手动指南）
+make run                               # 起 QEMU（9p 挂载本仓库到 /mnt）
+QMP_SOCK=/tmp/tmp105.sock make run     # 手动调试（宿主侧用 qmp_dev.py 改温度）
+make verify                            # 依次跑 4 个 tests/*/*/verify_qemu.sh
+
+make env-qemu / env-kernel / env-busybox / env-initramfs   # 只重建某一部分
+make env-qemu-hack / env-qemu-export / env-qemu-status     # 改 QEMU 的流程
+make env-distclean                     # 删除 build/ 与 external/（可重建）
+
 make KDIR=/lib/modules/$(uname -r)/build ARCH=x86_64 CROSS_COMPILE=   # 编本机内核模块
 ```
+
+环境细节（recipe 模型、改 QEMU、升级上游、常见问题）见
+[实验环境与构建](doc/环境与构建.md)。
 
 ## 新增一个驱动（4 步）
 
@@ -156,6 +195,7 @@ make KDIR=/lib/modules/$(uname -r)/build ARCH=x86_64 CROSS_COMPILE=   # 编本�
 
 ## 文档
 
+- [实验环境与构建](doc/环境与构建.md) —— **recipe 模型**：env/external/build 边界、新电脑三条命令、QEMU 改动与换基线流程、内核/busybox/initramfs 重建、常见问题
 - [开发规范](doc/开发规范.md) —— 目录/命名规则（含反例）、新增驱动 4 步、编码风格（checkpatch 0/0）、许可、日志、错误处理、提交与验收
 - [hwmon_i2c_tmp105 设计文档](doc/hwmon/i2c-tmp105/设计文档.md) —— 器件规约 / 架构选择 / 驱动设计 / 设备侧配置 / 4 层测试 / 里程碑 / **§12 实测结论**
 - [hwmon_i2c_tmp105 手动测试指南](doc/hwmon/i2c-tmp105/手动测试指南.md) —— **纯手动命令版，且只用驱动的 hwmon 接口**：接口读写与边界（0.5 °C 量化、量程钳位）、报警翻转、`qom-set` 造温度、反向用例、`Ctrl-A c` 排查、现象速查表

@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: a1an1in <a1an1in@sina.com>
+Date: Fri, 7 Aug 2026 15:19:10 +0800
+Subject: [PATCH 2/5] add eeprom
+
+---
+ hw/arm/Kconfig        |  3 +++
+ hw/arm/virt.c         | 54 +++++++++++++++++++++++++++++++++++++++++++
+ include/hw/arm/virt.h |  1 +
+ 3 files changed, 58 insertions(+)
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index 94a4a64343..ce2870d15b 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -22,6 +22,9 @@ config ARM_VIRT
+     select PL031 # RTC
+     select PL061 # GPIO
+     select VFPGA
++    select I2C
++    select DESIGNWARE_I2C
++    select AT24C # EEPROM
+     select GPIO_PWR
+     select PLATFORM_BUS
+     select SMBIOS
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 8669d2b9e8..b70b7434aa 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -39,6 +39,8 @@
+ #include "hw/arm/virt.h"
+ #include "hw/arm/machines-qom.h"
+ #include "hw/misc/vfpga.h"
++#include "hw/i2c/designware_i2c.h"
++#include "hw/nvram/eeprom_at24c.h"
+ #include "hw/block/flash.h"
+ #include "hw/display/ramfb.h"
+ #include "net/net.h"
+@@ -205,6 +207,7 @@ static const MemMapEntry base_memmap[] = {
+     [VIRT_FW_CFG] =             { 0x09020000, 0x00000018 },
+     [VIRT_GPIO] =               { 0x09030000, 0x00001000 },
+     [VIRT_UART1] =              { 0x09040000, 0x00001000 },
++    [VIRT_I2C] =                { 0x09060000, 0x00001000 },
+     [VIRT_SMMU] =               { 0x09050000, SMMU_IO_LEN },
+     [VIRT_PCDIMM_ACPI] =        { 0x09070000, MEMORY_HOTPLUG_IO_LEN },
+     [VIRT_ACPI_GED] =           { 0x09080000, ACPI_GED_EVT_SEL_LEN },
+@@ -274,6 +277,7 @@ static const int a15irqmap[] = {
+     [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
+     [VIRT_SMMU] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */
+     [VIRT_PLATFORM_BUS] = 112, /* ...to 112 + PLATFORM_BUS_NUM_IRQS -1 */
++    [VIRT_I2C] = 71,           /* SPI 71 */
+     [VIRT_FPGA] = 70,          /* SPI 70 */
+ };
+ 
+@@ -1605,6 +1609,55 @@ static void create_vfpga(const VirtMachineState *vms)
+     g_free(nodename);
+ }
+ 
++/*
++ * Create a DesignWare I2C controller with an EEPROM slave on the virt machine.
++ * This exposes /dev/i2c-N to the guest for testing the userspace I2C driver.
++ */
++static void create_i2c(const VirtMachineState *vms)
++{
++    char *nodename;
++    hwaddr base = vms->memmap[VIRT_I2C].base;
++    hwaddr size = vms->memmap[VIRT_I2C].size;
++    int irq = vms->irqmap[VIRT_I2C];
++    const char compat[] = "snps,designware-i2c";
++    MachineState *ms = MACHINE(vms);
++    SysBusDevice *sbd;
++    DeviceState *dev;
++    I2CBus *bus;
++
++    /* 1. Create the DesignWare I2C controller */
++    dev = qdev_new(TYPE_DESIGNWARE_I2C);
++    sbd = SYS_BUS_DEVICE(dev);
++    sysbus_realize_and_unref(sbd, &error_fatal);
++    sysbus_mmio_map(sbd, 0, base);
++    sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(vms->gic, irq));
++
++    /* 2. Attach an at24c EEPROM slave at address 0x50 on the I2C bus
++     * (standard I2C EEPROM, supports I2C_RDWR transactions) */
++    bus = I2C_BUS(qdev_get_child_bus(dev, "i2c-bus"));
++    at24c_eeprom_init(bus, 0x50, 256);
++
++    /* 3. Generate the device tree node */
++    nodename = g_strdup_printf("/i2c@%" PRIx64, base);
++    qemu_fdt_add_subnode(ms->fdt, nodename);
++    qemu_fdt_setprop(ms->fdt, nodename, "compatible", compat, sizeof(compat));
++    qemu_fdt_setprop_sized_cells(ms->fdt, nodename, "reg",
++                                 2, base, 2, size);
++    qemu_fdt_setprop_cells(ms->fdt, nodename, "interrupts",
++                           gic_fdt_irq_type_spi(vms), irq,
++                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
++    qemu_fdt_setprop_cell(ms->fdt, nodename, "#address-cells", 1);
++    qemu_fdt_setprop_cell(ms->fdt, nodename, "#size-cells", 0);
++    qemu_fdt_setprop_cell(ms->fdt, nodename, "clock-frequency", 100000);
++
++    /* EEPROM child node */
++    qemu_fdt_add_subnode(ms->fdt, "/i2c@9060000/eeprom@50");
++    qemu_fdt_setprop_string(ms->fdt, "/i2c@9060000/eeprom@50",
++                            "compatible", "atmel,24c02");
++    qemu_fdt_setprop_cell(ms->fdt, "/i2c@9060000/eeprom@50", "reg", 0x50);
++    g_free(nodename);
++}
++
+ static DeviceState *gpio_key_dev;
+ static void virt_powerdown_req(Notifier *n, void *opaque)
+ {
+@@ -3238,6 +3291,7 @@ static void machvirt_init(MachineState *machine)
+     create_rtc(vms);
+ 
+     create_vfpga(vms);
++    create_i2c(vms);
+ 
+     create_pcie(vms);
+     create_cxl_host_reg_region(vms);
+diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
+index 5ffb78c593..c132ef65f3 100644
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -100,6 +100,7 @@ enum {
+     VIRT_GWDT_WS0,
+     VIRT_GWDT_REFRESH,
+     VIRT_GWDT_CONTROL,
++    VIRT_I2C,
+     VIRT_FPGA,
+     VIRT_LOWMEMMAP_LAST,
+ };

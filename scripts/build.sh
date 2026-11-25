@@ -12,11 +12,15 @@
 #   KDIR=/path/to/linux-tree  ARCH=arm64  CROSS_COMPILE=aarch64-linux-gnu-
 set -e
 
-KDIR=${KDIR:-/home/alan/workspace/linux-4.9.263}
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=common.sh
+. "$ROOT/scripts/common.sh"
+
+KDIR=${KDIR:-$KERNEL_BUILD}
 ARCH=${ARCH:-arm64}
 CROSS_COMPILE=${CROSS_COMPILE:-aarch64-linux-gnu-}
+KSRC=${KERNEL_SRC:-$KDIR}
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 KBUILD_FLAGS=(-C "$KDIR" ARCH="$ARCH" CROSS_COMPILE="$CROSS_COMPILE")
 MODE=${1:-modules}
 
@@ -37,8 +41,8 @@ sparse)
 		done
 	;;
 checkpatch)
-	if [ ! -x "$KDIR/scripts/checkpatch.pl" ]; then
-		echo "找不到 $KDIR/scripts/checkpatch.pl" >&2
+	if [ ! -x "$KSRC/scripts/checkpatch.pl" ]; then
+		echo "找不到 $KSRC/scripts/checkpatch.pl" >&2
 		exit 1
 	fi
 	# 排除 kbuild 生成的文件（*.mod.c 等），只检查我们手写的源码
@@ -46,7 +50,7 @@ checkpatch)
 		! -name '*.mod.c' ! -path '*/.tmp_versions/*' | sort)
 	[ -n "$files" ] || { echo "没有可检查的源文件"; exit 1; }
 	# shellcheck disable=SC2086
-	"$KDIR/scripts/checkpatch.pl" --no-tree --strict -f $files
+	"$KSRC/scripts/checkpatch.pl" --no-tree --strict -f $files
 	;;
 *)
 	sed -n '2,13p' "$0"

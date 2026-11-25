@@ -1,0 +1,78 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: a1an1in <a1an1in@sina.com>
+Date: Fri, 7 Aug 2026 16:39:57 +0800
+Subject: [PATCH 3/5] add 2 different temperature sensors
+
+---
+ hw/arm/Kconfig |  1 +
+ hw/arm/virt.c  | 29 +++++++++++++++++++++++++++--
+ 2 files changed, 28 insertions(+), 2 deletions(-)
+
+diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
+index ce2870d15b..46baaaead4 100644
+--- a/hw/arm/Kconfig
++++ b/hw/arm/Kconfig
+@@ -25,6 +25,7 @@ config ARM_VIRT
+     select I2C
+     select DESIGNWARE_I2C
+     select AT24C # EEPROM
++    select TMP105 # temperature sensor
+     select GPIO_PWR
+     select PLATFORM_BUS
+     select SMBIOS
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index b70b7434aa..6850c1ab82 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -41,6 +41,8 @@
+ #include "hw/misc/vfpga.h"
+ #include "hw/i2c/designware_i2c.h"
+ #include "hw/nvram/eeprom_at24c.h"
++#include "hw/sensor/tmp105.h"
++#include "hw/sensor/emc141x_regs.h"
+ #include "hw/block/flash.h"
+ #include "hw/display/ramfb.h"
+ #include "net/net.h"
+@@ -1632,10 +1634,21 @@ static void create_i2c(const VirtMachineState *vms)
+     sysbus_mmio_map(sbd, 0, base);
+     sysbus_connect_irq(sbd, 0, qdev_get_gpio_in(vms->gic, irq));
+ 
+-    /* 2. Attach an at24c EEPROM slave at address 0x50 on the I2C bus
+-     * (standard I2C EEPROM, supports I2C_RDWR transactions) */
++    /* 2. Attach I2C slaves on the bus:
++     *    - at24c EEPROM at 0x50 (standard I2C EEPROM)
++     *    - tmp105 temperature sensor at 0x48 (set to 25°C)
++     *    - emc1413 temperature sensor at 0x4C (set to 30°C) */
+     bus = I2C_BUS(qdev_get_child_bus(dev, "i2c-bus"));
+     at24c_eeprom_init(bus, 0x50, 256);
++    {
++        DeviceState *tmp105 = DEVICE(i2c_slave_create_simple(bus, TYPE_TMP105, 0x48));
++        qdev_prop_set_int32(tmp105, "temperature", 25000); /* 25°C in milli-degrees */
++    }
++    {
++        /* emc1413: 8-bit integer temperature, 1°C/LSB (differs from tmp105) */
++        DeviceState *emc1413 = DEVICE(i2c_slave_create_simple(bus, "emc1413", 0x4C));
++        qdev_prop_set_int32(emc1413, "temperature0", 30000); /* 30°C in milli-degrees */
++    }
+ 
+     /* 3. Generate the device tree node */
+     nodename = g_strdup_printf("/i2c@%" PRIx64, base);
+@@ -1655,6 +1668,18 @@ static void create_i2c(const VirtMachineState *vms)
+     qemu_fdt_setprop_string(ms->fdt, "/i2c@9060000/eeprom@50",
+                             "compatible", "atmel,24c02");
+     qemu_fdt_setprop_cell(ms->fdt, "/i2c@9060000/eeprom@50", "reg", 0x50);
++
++    /* tmp105 temperature sensor child node */
++    qemu_fdt_add_subnode(ms->fdt, "/i2c@9060000/tmp105@48");
++    qemu_fdt_setprop_string(ms->fdt, "/i2c@9060000/tmp105@48",
++                            "compatible", "ti,tmp105");
++    qemu_fdt_setprop_cell(ms->fdt, "/i2c@9060000/tmp105@48", "reg", 0x48);
++
++    /* emc1413 temperature sensor child node */
++    qemu_fdt_add_subnode(ms->fdt, "/i2c@9060000/emc1413@4c");
++    qemu_fdt_setprop_string(ms->fdt, "/i2c@9060000/emc1413@4c",
++                            "compatible", "smsc,emc1413");
++    qemu_fdt_setprop_cell(ms->fdt, "/i2c@9060000/emc1413@4c", "reg", 0x4c);
+     g_free(nodename);
+ }
+ 

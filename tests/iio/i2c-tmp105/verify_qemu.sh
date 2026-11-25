@@ -24,10 +24,11 @@
 # 可用环境变量覆盖：QEMU / KDIR / INITRD / KMODS_ROOT
 set -u
 
-QEMU=${QEMU:-/home/alan/workspace/qemu/build/qemu-system-aarch64}
-KDIR=${KDIR:-/home/alan/workspace/linux-4.9.263}
-INITRD=${INITRD:-/home/alan/workspace/busybox-1.33.1/initramfs.cpio.gz}
-KMODS_ROOT=${KMODS_ROOT:-/home/alan/workspace/linux-kmods}
+LAB_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
+QEMU=${QEMU:-$LAB_ROOT/build/qemu/qemu-system-aarch64}
+KDIR=${KDIR:-$LAB_ROOT/build/kernel}
+INITRD=${INITRD:-$LAB_ROOT/build/initramfs.cpio.gz}
+KMODS_ROOT=${KMODS_ROOT:-$LAB_ROOT}
 KO_IN_GUEST=/mnt/drivers/iio/i2c-tmp105/iio_i2c_tmp105.ko
 
 SOCK=$(mktemp -u /tmp/iio105-qmp.XXXXXX.sock)

@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lab <lab@localhost>
+Date: Wed, 25 Nov 2026 13:56:43 +0800
+Subject: [PATCH] hw/misc/edu: route DMA through IOMMU address space
+
+---
+ hw/misc/edu.c | 20 ++++++++++++++++----
+ 1 file changed, 16 insertions(+), 4 deletions(-)
+
+diff --git a/hw/misc/edu.c b/hw/misc/edu.c
+index a4b01269e8..16246f50c1 100644
+--- a/hw/misc/edu.c
++++ b/hw/misc/edu.c
+@@ -148,19 +148,31 @@ static void edu_dma_timer(void *opaque)
+         return;
+     }
+ 
++    /*
++     * Use pci_device_iommu_address_space() instead of the default
++     * pci_dma_read/pci_dma_write (which use pci_get_address_space
++     * = dev->bus_master_as, a fixed alias that does NOT go through
++     * IOMMU on conventional PCI devices like edu).  This ensures
++     * the DMA goes through the IOMMU (SMMUv3), allowing VFIO
++     * dma_map'd IOVA to be correctly translated.
++     */
+     if (EDU_DMA_DIR(edu->dma.cmd) == EDU_DMA_FROM_PCI) {
+         uint64_t dst = edu->dma.dst;
+         if (edu_check_range(dst, edu->dma.cnt, DMA_START, DMA_SIZE)) {
+             dst -= DMA_START;
+-            pci_dma_read(&edu->pdev, edu_clamp_addr(edu, edu->dma.src),
+-                         edu->dma_buf + dst, edu->dma.cnt);
++            dma_memory_rw(pci_device_iommu_address_space(&edu->pdev),
++                          edu_clamp_addr(edu, edu->dma.src),
++                          edu->dma_buf + dst, edu->dma.cnt,
++                          DMA_DIRECTION_TO_DEVICE, MEMTXATTRS_UNSPECIFIED);
+         }
+     } else {
+         uint64_t src = edu->dma.src;
+         if (edu_check_range(src, edu->dma.cnt, DMA_START, DMA_SIZE)) {
+             src -= DMA_START;
+-            pci_dma_write(&edu->pdev, edu_clamp_addr(edu, edu->dma.dst),
+-                          edu->dma_buf + src, edu->dma.cnt);
++            dma_memory_rw(pci_device_iommu_address_space(&edu->pdev),
++                          edu_clamp_addr(edu, edu->dma.dst),
++                          edu->dma_buf + src, edu->dma.cnt,
++                          DMA_DIRECTION_FROM_DEVICE, MEMTXATTRS_UNSPECIFIED);
+         }
+     }
+ 
