@@ -98,6 +98,9 @@ git add env/qemu/patches env/qemu/series
 git commit -m "qemu: add foo sensor at 0x4d"
 ```
 
+- `qemu hack` 只做一件事：确保 `external/qemu` 在 `lab/work` 分支（不存在则从
+  `QEMU_BASE` 创建并重放当前 series）。它**不编译、不导出、不动内核**；
+  已经在 `lab/work` 时基本是 no-op。
 - `qemu export` 要求 `external/qemu` 工作区干净（先 commit），并按 `QEMU_BASE..lab/work`
   生成 patch；文件名来自 commit subject，顺序写入 `env/qemu/series/<series>`。
 - `qemu export` 用 `git format-patch --zero-commit`，所以 patch 内容可复现。
@@ -141,6 +144,10 @@ python3 tools/devops.py kernel export  # 重写 env/kernel/patches/<series> 和 
 git add env/kernel/patches env/kernel/series
 git commit -m "kernel: my change"
 ```
+
+> 第一次 `init` 才会在 `external/linux-*` 里创建 `.git`。在此之前，`git -C
+> external/linux-* status` 会向上找到总仓的 `.git`，看起来像 linux-kmods 的仓库，
+> 这是正常的；`kernel status` 也会提示“还没有 git 基线”。
 
 - `kernel export` 生成 `git format-patch --zero-commit` 格式，`init` / `kernel reset`
   会用 `git am --3way` 重放。
