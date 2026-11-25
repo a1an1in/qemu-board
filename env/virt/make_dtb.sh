@@ -3,7 +3,7 @@
 #
 # 从 virt_custom.dts 生成 DTB（可选）。
 # 默认 run 不传 -dtb：自研 QEMU 自动生成的 FDT 才带 tmp105/emmc/spi 节点。
-# 只有移植到别的 QEMU/板子时才需要这份 DTB（python3 tools/devops.py run --dtb ...）。
+# 只有移植到别的 QEMU/板子时才需要这份 DTB（手动启动时加 -dtb ...）。
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)

@@ -2,7 +2,7 @@
 
 - `virt_custom.dts`：从现成 DTB 反编译出来的完整设备树，仅作**备份/参考**。
 - `make_dtb.sh`：生成 `build/virt_custom.dtb`。
-- `make_flash.sh`：生成 64M pflash 镜像（`python3 tools/devops.py run --flash build/flash.img` 才用）。
+- `make_flash.sh`：生成 64M pflash 镜像（手动启动时加 `-drive file=build/flash.img,if=pflash,index=1,format=raw`）。
 
 > 默认不要传 `--dtb`。自研 QEMU 在 `machvirt_init()` 里生成 FDT，才会包含
 > `/i2c@9060000/tmp105@48` 等节点；`virt_custom.dtb` 不含 tmp105 节点，

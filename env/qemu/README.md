@@ -10,7 +10,7 @@ patches/*.patch       # 自研 virt 补丁，按文件名 0001、0002... 顺序�
 - 日常不要把 `external/qemu` 当成长期仓库；改动必须回流成 patch：
   ```sh
   python3 tools/devops.py qemu checkout
-  # 改代码、ninja -C build/qemu、python3 tools/devops.py run 验证
+  # 改代码、ninja -C build/qemu、手动启动 QEMU 验证
   git -C external/qemu commit -am "..."
   python3 tools/devops.py qemu patch
   git add env/qemu/patches && git commit -m "qemu: ..."

@@ -7,9 +7,8 @@
 #   python3 tools/devops.py init
 #   python3 tools/devops.py build
 #   python3 tools/devops.py build drivers
-#   python3 tools/devops.py run
 #   python3 tools/devops.py verify
-#   python3 tools/devops.py qemu status|hack|export|reset|rebase
+#   python3 tools/devops.py qemu status|diff|checkout|patch|reset|rebase
 #
 # 本文件保留 make 兼容入口，所有 target 都转调 tools/devops.py。
 
@@ -25,7 +24,7 @@ MODULE_DIRS	:= $(shell find drivers -name Kbuild -printf '%h\n' 2>/dev/null | so
 
 .PHONY: all modules clean list help \
 	env env-fetch env-build env-qemu env-kernel env-busybox env-initramfs \
-	run verify doctor \
+	verify doctor \
 	env-qemu-hack env-qemu-export env-qemu-reset env-qemu-rebase env-qemu-status \
 	env-qemu-checkout env-qemu-patch \
 	env-distclean
@@ -64,9 +63,6 @@ env-busybox:
 env-initramfs:
 	@$(DEVOPS) build initramfs
 
-run:
-	@$(DEVOPS) run
-
 verify:
 	@$(DEVOPS) verify
 
@@ -98,7 +94,7 @@ env-distclean:
 help:
 	@echo "推荐：python3 tools/devops.py <命令>（Windows 用 python tools/devops.py）"
 	@echo "  doctor / init / build [all|qemu|kernel|busybox|initramfs|drivers] [驱动路径]"
-	@echo "  run / verify / qemu status|diff|checkout|patch|reset|rebase / clean / status / list"
+	@echo "  verify / qemu status|diff|checkout|patch|reset|rebase / clean / status / list"
 	@echo
-	@echo "make 兼容 target：env / env-build / run / verify / doctor / modules / clean"
+	@echo "make 兼容 target：env / env-build / verify / doctor / modules / clean"
 	@echo "发现到的模块目录:"; $(DEVOPS) list

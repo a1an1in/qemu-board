@@ -9,9 +9,8 @@
 # 注意：
 #  - L1 的原始寄存器对照（i2cget）必须在 insmod **之前**做：驱动一旦绑定
 #    0x48，i2c-dev 再访问同一从机会返回 "Device or resource busy"（EBUSY）。
-#  - L3 的"动态改温度"和负温度用例需要宿主机的 QMP/qom-set，见
-#    scripts/run_qemu.sh 与同目录的 verify_qemu.sh；本脚本只覆盖客户机侧
-#    能独立完成的检查。
+#  - L3 的"动态改温度"和负温度用例需要宿主机的 QMP/qom-set，见手动测试指南
+#    与同目录的 verify_qemu.sh；本脚本只覆盖客户机侧能独立完成的检查。
 
 HWMON_ROOT=/sys/class/hwmon
 I2C_BUS=${I2C_BUS:-0}

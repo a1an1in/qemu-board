@@ -122,10 +122,9 @@ linux-kmods/
 │   ├── pack_initramfs.sh                #   → tools/devops.py build initramfs
 │   ├── qemu_hack.sh                     #   → tools/devops.py qemu
 │   ├── build.sh                         #   → tools/devops.py build drivers / checkpatch
-│   ├── run_qemu.sh                      #   → tools/devops.py run
 │   └── qmp_dev.py                       #   通用 QMP 工具：--match <设备> 定位，get/set 任意属性
 ├── tools/
-│   ├── devops.py                        # ★ 唯一入口：doctor/init/build[/drivers]/run/verify/qemu/clean
+│   ├── devops.py                        # ★ 唯一入口：doctor/init/build[/drivers]/verify/qemu/clean
 │   └── README.md
 ├── tests/                               # ← 与 drivers/ 同构（子系统/<总线>-<器件>）
 │   ├── hwmon/i2c-tmp105/
@@ -180,10 +179,9 @@ python3 tools/devops.py build drivers/chardev/i2c-tmp105   # 只编一个驱动
 python3 tools/devops.py build qemu           # 只编 QEMU（增量）
 python3 tools/devops.py build kernel         # 只编内核 Image + modules
 python3 tools/devops.py build initramfs      # 只重打 initramfs
-python3 tools/devops.py run                  # 起 QEMU（9p 挂载本仓库到 /mnt）
-python3 tools/devops.py run --qmp /tmp/tmp105.sock   # 手动调试（配合 scripts/qmp_dev.py）
 python3 tools/devops.py verify               # 跑 4 个 tests/*/*/verify_qemu.sh
 python3 tools/devops.py verify hwmon         # 只跑名字含 hwmon 的测试
+# 启动 QEMU 直接用命令（见 doc/*/手动测试指南.md），devops.py 不再封装 run
 python3 tools/devops.py qemu status|diff|checkout|patch|reset|rebase   # QEMU 改动流程
 # 内核改动直接用 git：git -C external/linux-4.9.263 ...
 python3 tools/devops.py clean env|all --yes  # 删除 build/ 或 build/+external/

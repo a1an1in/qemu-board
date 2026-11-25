@@ -13,7 +13,6 @@
     python3 tools/devops.py build drivers                # 编 drivers/** 外部模块
     python3 tools/devops.py build drivers/chardev        # 只编某个子系统
     python3 tools/devops.py build drivers/chardev/i2c-tmp105
-    python3 tools/devops.py run                    # 起 QEMU
     python3 tools/devops.py verify                 # 跑全部端到端测试
     python3 tools/devops.py qemu status|diff|checkout|patch|reset|rebase
     python3 tools/devops.py clean env|all          # 删构建产物/源码
@@ -609,7 +608,6 @@ def cmd_init(args, paths: Paths) -> int:
     print("  python3 tools/devops.py build          # 全部编译")
     print("  python3 tools/devops.py build kernel   # 只编内核")
     print("  python3 tools/devops.py build drivers        # 编 drivers/**")
-    print("  python3 tools/devops.py run            # 起 QEMU")
     return 0
 
 
@@ -915,44 +913,8 @@ def cmd_checkpatch(args, paths: Paths) -> int:
 
 
 # --------------------------------------------------------------------------
-# run / verify
+# verify
 # --------------------------------------------------------------------------
-
-def cmd_run(args, paths: Paths) -> int:
-    qemu = Path(os.environ.get("QEMU") or args.qemu or paths.qemu_bin).expanduser()
-    kdir = Path(os.environ.get("KDIR") or args.kdir or paths.kernel_build).expanduser()
-    initrd = Path(os.environ.get("INITRD") or args.initrd or paths.initrd).expanduser()
-    kmods = Path(os.environ.get("KMODS_ROOT") or ROOT).expanduser()
-    image = kdir / "arch" / "arm64" / "boot" / "Image"
-    if not qemu.is_file():
-        die(f"找不到 QEMU：{qemu}（先 python3 tools/devops.py build qemu）")
-    if not image.is_file():
-        die(f"找不到内核 Image：{image}（先 python3 tools/devops.py build kernel）")
-    if not initrd.is_file():
-        die(f"找不到 initramfs：{initrd}（先 python3 tools/devops.py build initramfs）")
-
-    cmd = [qemu, "-M", "virt", "-cpu", "cortex-a57", "-m", "2G",
-           "-kernel", image, "-initrd", initrd, "-nographic",
-           "-virtfs", f"local,path={kmods},mount_tag=kmods,"
-                      f"security_model=none,id=kmods"]
-    qmp = args.qmp or os.environ.get("QMP_SOCK", "")
-    dtb = args.dtb or os.environ.get("DTB", "")
-    flash = args.flash or os.environ.get("FLASH", "")
-    if dtb:
-        cmd += ["-dtb", dtb]
-    if flash:
-        cmd += ["-drive", f"file={flash},if=pflash,index=1,format=raw"]
-    if qmp:
-        Path(qmp).unlink(missing_ok=True)
-        cmd += ["-qmp", f"unix:{qmp},server,nowait"]
-    cmd += ["-append", "console=ttyAMA0 rdinit=/linuxrc"]
-    cmd += list(args.qemu_args or [])
-    print("启动：" + " ".join(shlex.quote(str(part)) for part in cmd))
-    if qmp:
-        print(f"QMP：{qmp}（宿主侧：scripts/qmp_dev.py ...）")
-    print("提示：串口里 Ctrl-A c 切到 monitor（再按一次切回）")
-    return subprocess.call([str(part) for part in cmd])
-
 
 def cmd_verify(args, paths: Paths) -> int:
     scripts = sorted((ROOT / "tests").glob("*/*/verify_qemu.sh"))
@@ -1259,7 +1221,6 @@ def build_parser() -> argparse.ArgumentParser:
   python3 tools/devops.py build kernel
   python3 tools/devops.py build drivers
   python3 tools/devops.py build drivers/hwmon/i2c-tmp105
-  python3 tools/devops.py run --qmp /tmp/tmp105.sock
   python3 tools/devops.py verify hwmon
   python3 tools/devops.py qemu status
   python3 tools/devops.py qemu diff --full
@@ -1296,16 +1257,6 @@ def build_parser() -> argparse.ArgumentParser:
     build.add_argument("--sparse", action="store_true")
 
     sub.add_parser("checkpatch", help="对 drivers/** 跑内核 checkpatch")
-
-    run_p = sub.add_parser("run", help="启动 QEMU")
-    run_p.add_argument("--qemu")
-    run_p.add_argument("--kdir")
-    run_p.add_argument("--initrd")
-    run_p.add_argument("--qmp")
-    run_p.add_argument("--dtb")
-    run_p.add_argument("--flash")
-    run_p.add_argument("qemu_args", nargs=argparse.REMAINDER,
-                       help="额外 QEMU 参数（放在 -- 之后）")
 
     verify = sub.add_parser("verify", help="跑 tests/*/*/verify_qemu.sh")
     verify.add_argument("pattern", nargs="*", help="可选：过滤子串，如 hwmon")
@@ -1346,8 +1297,6 @@ def dispatch(args, paths: Paths) -> int:
         return cmd_build(args, paths)
     if args.command == "checkpatch":
         return cmd_checkpatch(args, paths)
-    if args.command == "run":
-        return cmd_run(args, paths)
     if args.command == "verify":
         return cmd_verify(args, paths)
     if args.command == "qemu":

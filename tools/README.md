@@ -19,7 +19,6 @@ python3 tools/devops.py <命令> [选项]
 | `doctor` | 检查宿主依赖（git/make/gcc/aarch64-gcc/ninja/glib/pixman/bc/perl…） |
 | `init` | 按 `lab.conf` + `env/` 还原 recipe：下载/校验/解包内核与 busybox，浅拉 QEMU 基线并打 patch。`--reset` 丢弃 `external/qemu` 本地改动；`--skip-qemu/--skip-kernel/--skip-busybox` 跳过部分 |
 | `build [all\|qemu\|kernel\|busybox\|initramfs\|drivers] [驱动路径]` | 编译。默认 `all`（环境四件套）；`build drivers` 编全部 `drivers/**`，也可 `build drivers/chardev`、`build drivers/chardev/i2c-tmp105` 只编某一个。`--jobs/--kdir/--arch/--cross-prefix/--sparse` |
-| `run` | 启动 QEMU（9p 挂载仓库）。`--qmp`、`--dtb`、`--flash`、`--qemu`、`--kdir`、`--initrd`；`--` 之后可传额外 QEMU 参数 |
 | `verify [子串]` | 依次运行 `tests/*/*/verify_qemu.sh`，可按名字过滤（如 `hwmon`） |
 | `qemu status\|diff\|checkout\|patch\|reset\|rebase <base>` | QEMU 定制工作流；patch 目录是 `env/qemu/patches/`（按文件名排序） |
 | `clean [drivers\|env\|all]` | 清驱动产物 / `build/` / `build/+external/`；非交互环境需 `--yes` |
@@ -45,7 +44,7 @@ python3 tools/devops.py <命令> [选项]
 | `KERNEL_PATCH_DIR` | `env/kernel/patches` | 换一套内核 patch 目录（可选） |
 | `KERNEL_GIT` | `1` | 设为 `0` 跳过 `init` 建立内核 git 基线（之后需自己 `git init`） |
 | `JOBS` / `ARCH` / `CROSS_COMPILE` | `nproc` / `arm64` / `aarch64-linux-gnu-` | 编译参数 |
-| `QEMU` / `INITRD` / `KMODS_ROOT` / `QMP_SOCK` | 由 recipe 推导 | `run` 覆盖 |
+| `QEMU` / `KDIR` / `INITRD` / `KMODS_ROOT` | 由 recipe 推导 | `verify` 脚本可直接用这些覆盖 |
 
 ## 修改代码与生成补丁
 
@@ -93,7 +92,7 @@ python3 tools/devops.py init          # 首次
 python3 tools/devops.py qemu checkout     # 切到 external/qemu 的 dev
 vim external/qemu/hw/arm/virt.c       # 改代码
 ninja -C build/qemu qemu-system-aarch64
-python3 tools/devops.py run           # 上机验证
+python3 tools/devops.py build qemu           # 只编 QEMU（增量）
 
 git -C external/qemu add -A
 git -C external/qemu commit -m "virt: add foo sensor at 0x4d"
@@ -185,7 +184,6 @@ python3 tools/devops.py build drivers
 python3 tools/devops.py build drivers/chardev
 python3 tools/devops.py build drivers/chardev/i2c-tmp105
 python3 tools/devops.py build drivers/hwmon/i2c-tmp105
-python3 tools/devops.py run --qmp /tmp/tmp105.sock
 python3 tools/devops.py verify hwmon
 python3 tools/devops.py qemu status
 python3 tools/devops.py clean all --yes
