@@ -36,4 +36,4 @@ python3 tools/devops.py build kernel
 > 不想用可以 `KERNEL_GIT=0 python3 tools/devops.py init` 跳过，但 `kernel` 子命令将不可用；
 > `build kernel` 仍然可用。
 
-内核构建产物在 `build/kernel/`，`modules` 默认 `KDIR=build/kernel`。
+内核构建产物在 `build/kernel/`，驱动模块默认 `KDIR=build/kernel`。

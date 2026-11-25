@@ -14,16 +14,16 @@ shift || true
 
 case "$MODE" in
 modules)
-	exec "$PY" "$ROOT/tools/devops.py" modules "$@"
+	exec "$PY" "$ROOT/tools/devops.py" build drivers "$@"
 	;;
 clean)
-	exec "$PY" "$ROOT/tools/devops.py" clean modules --yes "$@"
+	exec "$PY" "$ROOT/tools/devops.py" clean drivers --yes "$@"
 	;;
 checkpatch)
 	exec "$PY" "$ROOT/tools/devops.py" checkpatch "$@"
 	;;
 sparse)
-	exec "$PY" "$ROOT/tools/devops.py" modules --sparse "$@"
+	exec "$PY" "$ROOT/tools/devops.py" build drivers --sparse "$@"
 	;;
 *)
 	sed -n '2,10p' "$0"

@@ -121,11 +121,11 @@ linux-kmods/
 │   ├── build_env.sh                     #   → tools/devops.py build
 │   ├── pack_initramfs.sh                #   → tools/devops.py build initramfs
 │   ├── qemu_hack.sh                     #   → tools/devops.py qemu
-│   ├── build.sh                         #   → tools/devops.py modules/checkpatch
+│   ├── build.sh                         #   → tools/devops.py build drivers / checkpatch
 │   ├── run_qemu.sh                      #   → tools/devops.py run
 │   └── qmp_dev.py                       #   通用 QMP 工具：--match <设备> 定位，get/set 任意属性
 ├── tools/
-│   ├── devops.py                        # ★ 唯一入口：doctor/init/build/modules/run/verify/qemu/clean
+│   ├── devops.py                        # ★ 唯一入口：doctor/init/build[/drivers]/run/verify/qemu/kernel/clean
 │   └── README.md
 ├── tests/                               # ← 与 drivers/ 同构（子系统/<总线>-<器件>）
 │   ├── hwmon/i2c-tmp105/
@@ -174,7 +174,9 @@ python3 tools/devops.py build      # 全量编译 QEMU/内核/busybox/initramfs
 日常：
 
 ```sh
-python3 tools/devops.py modules              # 编 drivers/**（KDIR=build/kernel）
+python3 tools/devops.py build drivers              # 编 drivers/**（KDIR=build/kernel）
+python3 tools/devops.py build drivers/chardev      # 只编某个子系统
+python3 tools/devops.py build drivers/chardev/i2c-tmp105   # 只编一个驱动
 python3 tools/devops.py build qemu           # 只编 QEMU（增量）
 python3 tools/devops.py build kernel         # 只编内核 Image + modules
 python3 tools/devops.py build initramfs      # 只重打 initramfs

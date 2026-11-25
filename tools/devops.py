@@ -10,7 +10,9 @@
     python3 tools/devops.py init                   # 还原 recipe（下载/解包/patch）
     python3 tools/devops.py build                  # 编 QEMU + 内核 + busybox + initramfs
     python3 tools/devops.py build kernel           # 只编内核
-    python3 tools/devops.py modules                # 编 drivers/** 外部模块
+    python3 tools/devops.py build drivers                # 编 drivers/** 外部模块
+    python3 tools/devops.py build drivers/chardev        # 只编某个子系统
+    python3 tools/devops.py build drivers/chardev/i2c-tmp105
     python3 tools/devops.py run                    # 起 QEMU
     python3 tools/devops.py verify                 # 跑全部端到端测试
     python3 tools/devops.py qemu status|diff|hack|export|reset|rebase
@@ -370,6 +372,18 @@ def qemu_expected_patches() -> int:
     return len(patch_entries(qemu_patch_dir()))
 
 
+def current_branch(repo: Path) -> str:
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "symbolic-ref", "--short", "-q", "HEAD"],
+        capture_output=True, text=True)
+    return proc.stdout.strip() if proc.returncode == 0 else ""
+
+
+def valid_branch(name: str) -> bool:
+    return subprocess.run(["git", "check-ref-format", "--branch", name],
+                          capture_output=True).returncode == 0
+
+
 def migrate_work_branch(repo: Path) -> None:
     """兼容旧分支名 lab/work：存在且 dev 不存在时直接改名。"""
     if not (repo / ".git").exists():
@@ -595,7 +609,7 @@ def cmd_init(args, paths: Paths) -> int:
     print("下一步：")
     print("  python3 tools/devops.py build          # 全部编译")
     print("  python3 tools/devops.py build kernel   # 只编内核")
-    print("  python3 tools/devops.py modules        # 编 drivers/**")
+    print("  python3 tools/devops.py build drivers        # 编 drivers/**")
     print("  python3 tools/devops.py run            # 起 QEMU")
     return 0
 
@@ -770,18 +784,37 @@ def cmd_build_initramfs(paths: Paths) -> None:
 
 
 def cmd_build(args, paths: Paths) -> int:
-    job_count = jobs(args.jobs)
-    targets = (["qemu", "kernel", "busybox", "initramfs"]
-               if args.target == "all" else [args.target])
-    if "qemu" in targets:
-        build_qemu(paths, job_count)
-    if "kernel" in targets:
-        build_kernel(paths, job_count)
-    if "busybox" in targets:
-        build_busybox(paths, job_count)
-    if "initramfs" in targets:
-        cmd_build_initramfs(paths)
-    return 0
+    target = args.target
+    env_targets = {"qemu", "kernel", "busybox", "initramfs"}
+
+    if target in env_targets or target == "all":
+        if args.driver:
+            die(f"{target} 不接受 driver 参数；"
+                f"编驱动请用 build drivers/路径")
+        job_count = jobs(args.jobs)
+        targets = (["qemu", "kernel", "busybox", "initramfs"]
+                   if target == "all" else [target])
+        if "qemu" in targets:
+            build_qemu(paths, job_count)
+        if "kernel" in targets:
+            build_kernel(paths, job_count)
+        if "busybox" in targets:
+            build_busybox(paths, job_count)
+        if "initramfs" in targets:
+            cmd_build_initramfs(paths)
+        return 0
+
+    # build drivers / drivers/chardev / drivers/chardev/i2c-tmp105
+    if target == "drivers":
+        selector = args.driver
+    else:
+        if args.driver:
+            die(f"用法：build drivers [驱动路径]（不要写成 "
+                f"build {target} {args.driver}）")
+        selector = target
+    if not selector or selector in ("drivers", "drivers/"):
+        selector = None
+    return cmd_build_drivers(selector, args, paths)
 
 
 # --------------------------------------------------------------------------
@@ -793,7 +826,35 @@ def module_dirs() -> list[Path]:
                   (ROOT / "drivers").rglob("Kbuild"))
 
 
-def cmd_modules(args, paths: Paths) -> int:
+def resolve_driver_dirs(spec: str | None) -> list[Path]:
+    all_dirs = module_dirs()
+    if not spec:
+        return all_dirs
+
+    raw = spec.strip().strip("/")
+    if raw.startswith("./"):
+        raw = raw[2:]
+    rel = raw[len("drivers/"):] if raw.startswith("drivers/") else raw
+
+    for base in (ROOT / raw, ROOT / "drivers" / rel):
+        if base.is_dir():
+            found = sorted(item.parent for item in base.rglob("Kbuild"))
+            if found:
+                return found
+            die(f"{spec} 下没有 Kbuild 模块")
+
+    matches = [item for item in all_dirs if item.name == rel]
+    if len(matches) == 1:
+        return matches
+    if len(matches) > 1:
+        names = "\n".join(f"  {item.relative_to(ROOT)}" for item in matches)
+        die(f"目录名 {rel} 不唯一，请写完整路径，例如：\n{names}")
+
+    available = "\n".join(f"  {item.relative_to(ROOT)}" for item in all_dirs)
+    die(f"找不到驱动模块：{spec}\n可用模块：\n{available}")
+
+
+def cmd_build_drivers(spec: str | None, args, paths: Paths) -> int:
     kdir = Path(args.kdir or os.environ.get("KDIR") or paths.kernel_build)
     kdir = kdir.expanduser().resolve()
     arch_value = args.arch or arch()
@@ -801,7 +862,7 @@ def cmd_modules(args, paths: Paths) -> int:
     if not (kdir / "Makefile").is_file() and not (kdir / "include").is_dir():
         die(f"KDIR 不存在或未准备：{kdir}\n"
             f"先 python3 tools/devops.py build kernel，或用 --kdir 指定")
-    dirs = module_dirs()
+    dirs = resolve_driver_dirs(spec)
     if not dirs:
         die("drivers/**/Kbuild 一个都没有")
     for directory in dirs:
@@ -820,7 +881,7 @@ def cmd_modules(args, paths: Paths) -> int:
     return 0
 
 
-def cmd_clean_modules(args, paths: Paths) -> int:
+def cmd_clean_drivers(args, paths: Paths) -> int:
     kdir = Path(args.kdir or os.environ.get("KDIR") or paths.kernel_build)
     kdir = kdir.expanduser().resolve()
     for directory in module_dirs():
@@ -828,7 +889,7 @@ def cmd_clean_modules(args, paths: Paths) -> int:
                f"CROSS_COMPILE={cross()}", f"M={directory.resolve()}", "clean"]
         run(cmd, check=False, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL)
-    info("模块产物已清理")
+    info("驱动模块产物已清理")
     return 0
 
 
@@ -945,20 +1006,23 @@ def cmd_qemu(args, paths: Paths) -> int:
         return 0
 
     if args.action == "diff":
-        branch = "dev" if git_ok(paths, "rev-parse", "--verify",
-                                       "-q", "dev") else "HEAD"
+        branch = current_branch(paths.qemu_src) or "HEAD"
         print_diff(paths.qemu_src, conf("QEMU_BASE"), branch, args.full)
         return 0
 
     if args.action == "checkout":
-        if git_ok(paths, "show-ref", "--verify", "-q", "refs/heads/dev"):
-            run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "dev"])
+        branch = args.target or "dev"
+        if not valid_branch(branch):
+            die(f"非法分支名：{branch}")
+        if git_ok(paths, "show-ref", "--verify", "-q",
+                  f"refs/heads/{branch}"):
+            run(["git", "-C", str(paths.qemu_src), "checkout", "-q", branch])
         else:
-            info("创建 dev 并重放当前 patches")
+            info(f"创建 {branch} 并重放当前 patches")
             run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-B",
-                 "dev", conf("QEMU_BASE")])
+                 branch, conf("QEMU_BASE")])
             qemu_apply_patches(paths)
-        print(f"已切到 {paths.qemu_src} 的 dev")
+        print(f"已切到 {paths.qemu_src} 的 {branch}")
         print("改完 commit 后执行：python3 tools/devops.py qemu patch")
         print(f"增量编译：ninja -C {paths.qemu_build} qemu-system-aarch64")
         return 0
@@ -966,23 +1030,24 @@ def cmd_qemu(args, paths: Paths) -> int:
     if args.action == "patch":
         if qemu_dirty(paths):
             die(f"有未提交改动，先 git -C {paths.qemu_src} commit")
-        if not git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
-            die("没有 dev 分支；先 python3 tools/devops.py qemu checkout")
+        branch = current_branch(paths.qemu_src)
+        if not branch:
+            die("当前是 detached HEAD；先 qemu checkout <branch>")
         base = conf("QEMU_BASE")
         if subprocess.run(["git", "-C", str(paths.qemu_src), "merge-base",
-                           "--is-ancestor", base, "dev"]).returncode != 0:
-            die(f"dev 不是基于 QEMU_BASE={base}；先更新 lab.conf 或 rebase")
-        count = int(git_out(paths, "rev-list", "--count", f"{base}..dev"))
+                           "--is-ancestor", base, branch]).returncode != 0:
+            die(f"{branch} 不是基于 QEMU_BASE={base}；先更新 lab.conf 或 rebase")
+        count = int(git_out(paths, "rev-list", "--count", f"{base}..{branch}"))
         if count <= 0:
-            die("dev 相对基线没有提交，无可导出内容")
+            die(f"{branch} 相对基线没有提交，无可导出内容")
         patch_dir = qemu_patch_dir()
         patch_dir.mkdir(parents=True, exist_ok=True)
         for old in patch_dir.glob("*.patch"):
             old.unlink()
-        info(f"导出 {count} 个 commit 到 {patch_dir}")
+        info(f"从 {branch} 导出 {count} 个 commit 到 {patch_dir}")
         run(["git", "-C", str(paths.qemu_src), "format-patch",
              "--zero-commit", "--no-signature", "--no-numbered",
-             "--full-index", "-o", patch_dir, f"{base}..dev"],
+             "--full-index", "-o", patch_dir, f"{base}..{branch}"],
             stdout=subprocess.DEVNULL)
         names = sorted(item.name for item in patch_dir.glob("*.patch"))
         print()
@@ -992,9 +1057,12 @@ def cmd_qemu(args, paths: Paths) -> int:
         return 0
 
     if args.action == "reset":
-        info(f"重置 dev 到 {conf('QEMU_BASE')} 并重放 patches")
+        branch = args.target or current_branch(paths.qemu_src) or "dev"
+        if not valid_branch(branch):
+            die(f"非法分支名：{branch}")
+        info(f"重置 {branch} 到 {conf('QEMU_BASE')} 并重放 patches")
         run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-f", "-B",
-             "dev", conf("QEMU_BASE")])
+             branch, conf("QEMU_BASE")])
         run(["git", "-C", str(paths.qemu_src), "reset", "-q", "--hard",
              conf("QEMU_BASE")])
         run(["git", "-C", str(paths.qemu_src), "clean", "-q", "-fdx"])
@@ -1002,17 +1070,21 @@ def cmd_qemu(args, paths: Paths) -> int:
         return 0
 
     if args.action == "rebase":
-        if not args.base:
+        if not args.target:
             die("用法：python3 tools/devops.py qemu rebase <新 base commit>")
-        if not git_ok(paths, "cat-file", "-e", f"{args.base}^{{commit}}"):
-            die(f"找不到 commit：{args.base}（先 git -C {paths.qemu_src} fetch）")
-        info(f"切到新基线 {args.base} 并重放 patches")
+        branch = current_branch(paths.qemu_src) or "dev"
+        if not valid_branch(branch):
+            die(f"非法分支名：{branch}")
+        if not git_ok(paths, "cat-file", "-e", f"{args.target}^{{commit}}"):
+            die(f"找不到 commit：{args.target}"
+                f"（先 git -C {paths.qemu_src} fetch）")
+        info(f"把 {branch} 切到新基线 {args.target} 并重放 patches")
         run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-f", "-B",
-             "dev", args.base])
+             branch, args.target])
         run(["git", "-C", str(paths.qemu_src), "reset", "-q", "--hard",
-             args.base])
+             args.target])
         qemu_apply_patches(paths)
-        print(f"\n重放成功。请更新 lab.conf：\n  QEMU_BASE={args.base}")
+        print(f"\n重放成功。请更新 lab.conf：\n  QEMU_BASE={args.target}")
         print("然后执行：python3 tools/devops.py qemu patch")
         return 0
 
@@ -1054,8 +1126,7 @@ def cmd_kernel(args, paths: Paths) -> int:
     migrate_work_branch(src)
 
     if args.action == "status":
-        branch = "dev" if kernel_git_ok(paths, "rev-parse", "--verify",
-                                             "-q", "dev") else "HEAD"
+        branch = current_branch(src) or "HEAD"
         print(f"仓库      {src}")
         print(f"recipe    base=lab-base "
               f"({kernel_expected_patches()} 个 patch，"
@@ -1067,37 +1138,41 @@ def cmd_kernel(args, paths: Paths) -> int:
         return 0
 
     if args.action == "checkout":
-        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
-            run(["git", "-C", str(src), "checkout", "-q", "dev"])
+        branch = args.target or "dev"
+        if not valid_branch(branch):
+            die(f"非法分支名：{branch}")
+        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", branch):
+            run(["git", "-C", str(src), "checkout", "-q", branch])
         else:
-            info("创建 dev 并重放内核 patches")
-            run(["git", "-C", str(src), "checkout", "-q", "-B", "dev",
+            info(f"创建 {branch} 并重放内核 patches")
+            run(["git", "-C", str(src), "checkout", "-q", "-B", branch,
                  "lab-base"])
             kernel_apply_patches(paths)
-        print(f"已切到 {src} 的 dev")
+        print(f"已切到 {src} 的 {branch}")
         print("改完 commit 后执行：python3 tools/devops.py kernel patch")
         return 0
 
     if args.action == "patch":
         if kernel_dirty(paths):
             die(f"有未提交改动，先 git -C {src} commit")
-        if not kernel_git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
-            die("没有 dev 分支；先 python3 tools/devops.py kernel checkout")
+        branch = current_branch(src)
+        if not branch:
+            die("当前是 detached HEAD；先 kernel checkout <branch>")
         if subprocess.run(["git", "-C", str(src), "merge-base",
-                           "--is-ancestor", "lab-base", "dev"]).returncode:
-            die("dev 不是基于 lab-base；先 kernel reset")
+                           "--is-ancestor", "lab-base", branch]).returncode:
+            die(f"{branch} 不是基于 lab-base；先 kernel reset")
         count = int(kernel_git(paths, "rev-list", "--count",
-                               "lab-base..dev"))
+                               f"lab-base..{branch}"))
         if count <= 0:
-            die("dev 相对基线没有提交，无可导出内容")
+            die(f"{branch} 相对基线没有提交，无可导出内容")
         patch_dir = kernel_patch_dir()
         patch_dir.mkdir(parents=True, exist_ok=True)
         for old in patch_dir.glob("*.patch"):
             old.unlink()
-        info(f"导出 {count} 个 commit 到 {patch_dir}")
+        info(f"从 {branch} 导出 {count} 个 commit 到 {patch_dir}")
         run(["git", "-C", str(src), "format-patch", "--zero-commit",
              "--no-signature", "--no-numbered", "--full-index",
-             "-o", patch_dir, "lab-base..dev"],
+             "-o", patch_dir, f"lab-base..{branch}"],
             stdout=subprocess.DEVNULL)
         names = sorted(item.name for item in patch_dir.glob("*.patch"))
         print()
@@ -1107,8 +1182,11 @@ def cmd_kernel(args, paths: Paths) -> int:
         return 0
 
     if args.action == "reset":
-        info("重置内核 dev 到 lab-base 并重放 patches")
-        run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", "dev",
+        branch = args.target or current_branch(src) or "dev"
+        if not valid_branch(branch):
+            die(f"非法分支名：{branch}")
+        info(f"重置内核 {branch} 到 lab-base 并重放 patches")
+        run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", branch,
              "lab-base"])
         run(["git", "-C", str(src), "reset", "-q", "--hard", "lab-base"])
         run(["git", "-C", str(src), "clean", "-q", "-fdx"])
@@ -1116,8 +1194,7 @@ def cmd_kernel(args, paths: Paths) -> int:
         return 0
 
     if args.action == "diff":
-        branch = "dev" if kernel_git_ok(paths, "rev-parse", "--verify",
-                                             "-q", "dev") else "HEAD"
+        branch = current_branch(src) or "HEAD"
         print_diff(src, "lab-base", branch, args.full)
         return 0
 
@@ -1137,8 +1214,8 @@ def confirm(prompt: str, assume_yes: bool) -> bool:
 
 
 def cmd_clean(args, paths: Paths) -> int:
-    if args.target == "modules":
-        return cmd_clean_modules(args, paths)
+    if args.target in ("drivers", "modules"):
+        return cmd_clean_drivers(args, paths)
     targets = [paths.build] if args.target == "env" else [paths.build,
                                                           paths.external]
     print("将删除：")
@@ -1265,7 +1342,8 @@ def build_parser() -> argparse.ArgumentParser:
   python3 tools/devops.py init
   python3 tools/devops.py build all --jobs 8
   python3 tools/devops.py build kernel
-  python3 tools/devops.py modules
+  python3 tools/devops.py build drivers
+  python3 tools/devops.py build drivers/hwmon/i2c-tmp105
   python3 tools/devops.py run --qmp /tmp/tmp105.sock
   python3 tools/devops.py verify hwmon
   python3 tools/devops.py qemu status
@@ -1291,18 +1369,18 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--skip-busybox", action="store_true")
     init.add_argument("--no-doctor", action="store_true")
 
-    build = sub.add_parser("build", help="编译实验环境")
+    build = sub.add_parser("build", help="编译实验环境 / 驱动")
     build.add_argument("target", nargs="?", default="all",
-                       choices=("all", "qemu", "kernel", "busybox",
-                                "initramfs"))
+                       help="all|qemu|kernel|busybox|initramfs|"
+                            "drivers[/子系统[/驱动]]")
+    build.add_argument("driver", nargs="?",
+                       help="直接写路径：build drivers/chardev、"
+                            "build drivers/chardev/i2c-tmp105")
+    build.add_argument("--kdir")
+    build.add_argument("--arch")
+    build.add_argument("--cross-prefix")
     build.add_argument("--jobs", type=int, default=0)
-
-    modules = sub.add_parser("modules", help="编译 drivers/** 外部模块")
-    modules.add_argument("--kdir")
-    modules.add_argument("--arch")
-    modules.add_argument("--cross-prefix")
-    modules.add_argument("--jobs", type=int, default=0)
-    modules.add_argument("--sparse", action="store_true")
+    build.add_argument("--sparse", action="store_true")
 
     sub.add_parser("checkpatch", help="对 drivers/** 跑内核 checkpatch")
 
@@ -1323,19 +1401,23 @@ def build_parser() -> argparse.ArgumentParser:
     qemu.add_argument("action",
                       choices=("status", "diff", "checkout", "patch", "reset",
                                "rebase"))
-    qemu.add_argument("base", nargs="?")
+    qemu.add_argument("target", nargs="?",
+                      help="checkout/reset 的分支名（默认 dev），"
+                           "或 rebase 的新 base commit")
     qemu.add_argument("--full", action="store_true",
                       help="diff 时输出完整补丁内容")
 
     kernel = sub.add_parser("kernel", help="内核定制工作流")
     kernel.add_argument("action",
                         choices=("status", "diff", "checkout", "patch", "reset"))
+    kernel.add_argument("target", nargs="?",
+                        help="checkout/reset 的分支名（默认 dev）")
     kernel.add_argument("--full", action="store_true",
                         help="diff 时输出完整补丁内容")
 
     clean = sub.add_parser("clean", help="清理产物")
-    clean.add_argument("target", nargs="?", default="modules",
-                       choices=("modules", "env", "all"))
+    clean.add_argument("target", nargs="?", default="drivers",
+                       choices=("drivers", "modules", "env", "all"))
     clean.add_argument("--yes", action="store_true")
     clean.add_argument("--kdir")
 
@@ -1357,8 +1439,6 @@ def dispatch(args, paths: Paths) -> int:
         return cmd_init(args, paths)
     if args.command == "build":
         return cmd_build(args, paths)
-    if args.command == "modules":
-        return cmd_modules(args, paths)
     if args.command == "checkpatch":
         return cmd_checkpatch(args, paths)
     if args.command == "run":

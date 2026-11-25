@@ -18,13 +18,12 @@ python3 tools/devops.py <命令> [选项]
 |---|---|
 | `doctor` | 检查宿主依赖（git/make/gcc/aarch64-gcc/ninja/glib/pixman/bc/perl…） |
 | `init` | 按 `lab.conf` + `env/` 还原 recipe：下载/校验/解包内核与 busybox，浅拉 QEMU 基线并打 patch。`--reset` 丢弃 `external/qemu` 本地改动；`--skip-qemu/--skip-kernel/--skip-busybox` 跳过部分 |
-| `build [all\|qemu\|kernel\|busybox\|initramfs]` | 编译。默认 `all`；全部 out-of-tree 到 `build/`。`--jobs N` |
-| `modules` | 编译 `drivers/**` 外部模块。`--kdir`、`--arch`、`--cross-prefix`、`--sparse` |
+| `build [all\|qemu\|kernel\|busybox\|initramfs\|drivers] [驱动路径]` | 编译。默认 `all`（环境四件套）；`build drivers` 编全部 `drivers/**`，也可 `build drivers/chardev`、`build drivers/chardev/i2c-tmp105` 只编某一个。`--jobs/--kdir/--arch/--cross-prefix/--sparse` |
 | `run` | 启动 QEMU（9p 挂载仓库）。`--qmp`、`--dtb`、`--flash`、`--qemu`、`--kdir`、`--initrd`；`--` 之后可传额外 QEMU 参数 |
 | `verify [子串]` | 依次运行 `tests/*/*/verify_qemu.sh`，可按名字过滤（如 `hwmon`） |
 | `qemu status\|diff\|checkout\|patch\|reset\|rebase <base>` | QEMU 定制工作流；patch 目录是 `env/qemu/patches/`（按文件名排序） |
 | `kernel status\|diff\|checkout\|patch\|reset` | 内核定制工作流；`external/linux-*` 有本地 `lab-base` git 基线，patch 目录是 `env/kernel/patches/` |
-| `clean [modules\|env\|all]` | 清模块产物 / `build/` / `build/+external/`；非交互环境需 `--yes` |
+| `clean [drivers\|env\|all]` | 清驱动产物 / `build/` / `build/+external/`；非交互环境需 `--yes` |
 | `status` | 查看版本、路径、产物和 QEMU 分支状态 |
 | `list` | 列出会被构建的模块目录 |
 | `help` | 帮助 |
@@ -124,7 +123,7 @@ python3 tools/devops.py verify
 
 ```sh
 vim drivers/chardev/i2c-tmp105/chardev_i2c_tmp105.c
-python3 tools/devops.py modules
+python3 tools/devops.py build drivers
 python3 tools/devops.py verify chardev
 git add drivers/chardev/i2c-tmp105 doc tests
 git commit -m "chardev_i2c_tmp105: ..."
@@ -170,7 +169,10 @@ git commit -m "kernel: my change"
 python3 tools/devops.py doctor
 python3 tools/devops.py init
 python3 tools/devops.py build --jobs 8
-python3 tools/devops.py modules
+python3 tools/devops.py build drivers
+python3 tools/devops.py build drivers/chardev
+python3 tools/devops.py build drivers/chardev/i2c-tmp105
+python3 tools/devops.py build drivers/hwmon/i2c-tmp105
 python3 tools/devops.py run --qmp /tmp/tmp105.sock
 python3 tools/devops.py verify hwmon
 python3 tools/devops.py qemu status

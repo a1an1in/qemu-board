@@ -6,7 +6,7 @@
 #   python3 tools/devops.py doctor
 #   python3 tools/devops.py init
 #   python3 tools/devops.py build
-#   python3 tools/devops.py modules
+#   python3 tools/devops.py build drivers
 #   python3 tools/devops.py run
 #   python3 tools/devops.py verify
 #   python3 tools/devops.py qemu status|hack|export|reset|rebase
@@ -27,16 +27,17 @@ MODULE_DIRS	:= $(shell find drivers -name Kbuild -printf '%h\n' 2>/dev/null | so
 	env env-fetch env-build env-qemu env-kernel env-busybox env-initramfs \
 	run verify doctor \
 	env-qemu-hack env-qemu-export env-qemu-reset env-qemu-rebase env-qemu-status \
+	env-qemu-checkout env-qemu-patch \
 	env-distclean
 
 all: modules
 
 modules:
-	@$(DEVOPS) modules --kdir "$(KDIR)" --arch "$(ARCH)" \
+	@$(DEVOPS) build drivers --kdir "$(KDIR)" --arch "$(ARCH)" \
 		--cross-prefix "$(CROSS_COMPILE)" --jobs $(JOBS)
 
 clean:
-	@$(DEVOPS) clean modules --yes --kdir "$(KDIR)"
+	@$(DEVOPS) clean drivers --yes --kdir "$(KDIR)"
 
 list:
 	@$(DEVOPS) list
@@ -72,11 +73,15 @@ verify:
 doctor:
 	@$(DEVOPS) doctor
 
-env-qemu-hack:
-	@$(DEVOPS) qemu hack
+env-qemu-checkout:
+	@$(DEVOPS) qemu checkout
 
-env-qemu-export:
-	@$(DEVOPS) qemu export
+env-qemu-patch:
+	@$(DEVOPS) qemu patch
+
+env-qemu-hack: env-qemu-checkout
+
+env-qemu-export: env-qemu-patch
 
 env-qemu-reset:
 	@$(DEVOPS) qemu reset
@@ -92,8 +97,8 @@ env-distclean:
 
 help:
 	@echo "推荐：python3 tools/devops.py <命令>（Windows 用 python tools/devops.py）"
-	@echo "  doctor / init / build [all|qemu|kernel|busybox|initramfs] / modules"
-	@echo "  run / verify / qemu status|hack|export|reset|rebase / clean / status / list"
+	@echo "  doctor / init / build [all|qemu|kernel|busybox|initramfs|drivers] [驱动路径]"
+	@echo "  run / verify / qemu status|diff|checkout|patch|reset|rebase / clean / status / list"
 	@echo
 	@echo "make 兼容 target：env / env-build / run / verify / doctor / modules / clean"
 	@echo "发现到的模块目录:"; $(DEVOPS) list
