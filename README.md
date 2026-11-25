@@ -88,12 +88,10 @@ linux-kmods/
 ├── env/                                 # ← 进 git 的"配方"
 │   ├── qemu/
 │   │   ├── configure.args              #   configure 参数
-│   │   ├── patches/base/               #   6 个自研 virt 补丁
-│   │   └── series/base                 #   补丁顺序
+│   │   └── patches/                    #   6 个自研 virt 补丁（按文件名排序）
 │   ├── kernel/
 │   │   ├── arm64-virt.config           #   完整 .config
-│   │   ├── patches/base/               #   内核代码 patch（可为空）
-│   │   ├── series/base                 #   patch 顺序
+│   │   ├── patches/                    #   内核代码 patch（可为空，按文件名排序）
 │   │   └── README.md
 │   ├── busybox/
 │   │   ├── busybox.config
@@ -184,8 +182,8 @@ python3 tools/devops.py run                  # 起 QEMU（9p 挂载本仓库到 
 python3 tools/devops.py run --qmp /tmp/tmp105.sock   # 手动调试（配合 scripts/qmp_dev.py）
 python3 tools/devops.py verify               # 跑 4 个 tests/*/*/verify_qemu.sh
 python3 tools/devops.py verify hwmon         # 只跑名字含 hwmon 的测试
-python3 tools/devops.py qemu status|diff|hack|export|reset|rebase   # QEMU 改动流程
-python3 tools/devops.py kernel status|diff|hack|export|reset        # 内核改动流程
+python3 tools/devops.py qemu status|diff|checkout|patch|reset|rebase   # QEMU 改动流程
+python3 tools/devops.py kernel status|diff|checkout|patch|reset        # 内核改动流程
 python3 tools/devops.py clean env|all --yes  # 删除 build/ 或 build/+external/
 python3 tools/devops.py status               # 看版本/路径/产物
 ```

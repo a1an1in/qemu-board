@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: a1an1in <a1an1in@sina.com>
 Date: Fri, 7 Aug 2026 16:39:57 +0800
-Subject: [PATCH 3/5] add 2 different temperature sensors
+Subject: [PATCH] add 2 different temperature sensors
 
 ---
  hw/arm/Kconfig |  1 +
@@ -9,7 +9,7 @@ Subject: [PATCH 3/5] add 2 different temperature sensors
  2 files changed, 28 insertions(+), 2 deletions(-)
 
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index ce2870d15b..46baaaead4 100644
+index ce2870d15bfa87c3c1ee0b71a539a80e6524b399..46baaaead4bec7aa1aa373a921ce4e45b5ab5c6e 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
 @@ -25,6 +25,7 @@ config ARM_VIRT
@@ -21,7 +21,7 @@ index ce2870d15b..46baaaead4 100644
      select PLATFORM_BUS
      select SMBIOS
 diff --git a/hw/arm/virt.c b/hw/arm/virt.c
-index b70b7434aa..6850c1ab82 100644
+index b70b7434aa3b16215ba59358452a1dcf41563bd9..6850c1ab821fd473f812a4c3a7897642884aa976 100644
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
 @@ -41,6 +41,8 @@

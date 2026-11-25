@@ -354,35 +354,47 @@ def git_ok(paths: Paths, *args: str) -> bool:
     return proc.returncode == 0
 
 
-def qemu_series_path() -> Path:
-    return ROOT / "env" / "qemu" / "series" / conf("QEMU_SERIES", "base")
-
-
 def qemu_patch_dir() -> Path:
-    return ROOT / "env" / "qemu" / "patches" / conf("QEMU_SERIES", "base")
+    value = os.environ.get("QEMU_PATCH_DIR")
+    return Path(value).expanduser() if value else ROOT / "env" / "qemu" / "patches"
+
+
+def patch_entries(patch_dir: Path) -> list[str]:
+    """按文件名排序返回 patch（0001、0002... 就是执行顺序）。"""
+    if patch_dir.is_dir():
+        return sorted(item.name for item in patch_dir.glob("*.patch"))
+    return []
 
 
 def qemu_expected_patches() -> int:
-    series = qemu_series_path()
-    if not series.exists():
-        return 0
-    return len([line for line in series.read_text(encoding="utf-8").splitlines()
-                if line.strip() and not line.lstrip().startswith("#")])
+    return len(patch_entries(qemu_patch_dir()))
+
+
+def migrate_work_branch(repo: Path) -> None:
+    """兼容旧分支名 lab/work：存在且 dev 不存在时直接改名。"""
+    if not (repo / ".git").exists():
+        return
+
+    def exists(name: str) -> bool:
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "-q",
+             f"refs/heads/{name}"], capture_output=True).returncode == 0
+
+    if not exists("dev") and exists("lab/work"):
+        info("迁移旧分支 lab/work -> dev")
+        run(["git", "-C", str(repo), "branch", "-m", "lab/work", "dev"])
 
 
 def qemu_dirty(paths: Paths) -> bool:
     return bool(git_out(paths, "status", "--porcelain"))
 
 
-def qemu_apply_series(paths: Paths) -> None:
-    series = qemu_series_path()
-    if not series.exists():
-        die(f"找不到 patch 队列：{series}")
-    count = 0
-    for raw in series.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
+def qemu_apply_patches(paths: Paths) -> None:
+    entries = patch_entries(qemu_patch_dir())
+    if not entries:
+        info("没有 QEMU patch（只有基线）")
+        return
+    for line in entries:
         patch = qemu_patch_dir() / line
         if not patch.is_file():
             die(f"patch 不存在：{patch}")
@@ -394,9 +406,6 @@ def qemu_apply_series(paths: Paths) -> None:
             die(f"应用 {line} 失败。\n"
                 f"在 {paths.qemu_src} 解决冲突后执行 git am --continue，"
                 f"或 python3 tools/devops.py qemu reset 放弃。")
-        count += 1
-    if not count:
-        die(f"patch 队列为空：{series}")
 
 
 def init_qemu(paths: Paths, reset: bool) -> None:
@@ -409,18 +418,20 @@ def init_qemu(paths: Paths, reset: bool) -> None:
         run(["git", "init", "-q"], cwd=q)
         run(["git", "remote", "add", "origin", conf("QEMU_URL")], cwd=q)
 
+    migrate_work_branch(q)
+
     if not reset:
         if qemu_dirty(paths):
-            die(f"{q} 有未提交改动：先 python3 tools/devops.py qemu export，"
+            die(f"{q} 有未提交改动：先 python3 tools/devops.py qemu patch，"
                 f"或 git stash；--reset 会丢弃")
-        if git_ok(paths, "rev-parse", "--verify", "-q", "lab/work"):
+        if git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
             base = conf("QEMU_BASE")
             actual = int(git_out(paths, "rev-list", "--count",
-                                 "lab/work", "--not", base) or 0)
+                                 "dev", "--not", base) or 0)
             expected = qemu_expected_patches()
             if actual > expected:
-                die(f"lab/work 比 recipe 多 {actual - expected} 个提交："
-                    f"先 python3 tools/devops.py qemu export，或 --reset 丢弃")
+                die(f"dev 比 recipe 多 {actual - expected} 个提交："
+                    f"先 python3 tools/devops.py qemu patch，或 --reset 丢弃")
 
     base = conf("QEMU_BASE")
     if not git_ok(paths, "cat-file", "-e", f"{base}^{{commit}}"):
@@ -440,32 +451,25 @@ def init_qemu(paths: Paths, reset: bool) -> None:
                                               f"{base}^{{commit}}"):
             die(f"无法获取 QEMU 基线 {base}；检查网络或 QEMU_FALLBACK_DEPTH")
 
-    run(["git", "-C", str(q), "checkout", "-q", "-f", "-B", "lab/work", base])
+    run(["git", "-C", str(q), "checkout", "-q", "-f", "-B", "dev", base])
     run(["git", "-C", str(q), "reset", "-q", "--hard", base])
     if reset:
         run(["git", "-C", str(q), "clean", "-q", "-fdx"])
-    info(f"QEMU：{q}（series={conf('QEMU_SERIES', 'base')}）")
-    qemu_apply_series(paths)
+    info(f"QEMU：{q}（patches={qemu_patch_dir()}）")
+    qemu_apply_patches(paths)
 
 
 # --------------------------------------------------------------------------
 # Linux 内核 patch 队列（external/linux-* 用本地 git 基线看 diff）
 # --------------------------------------------------------------------------
 
-def kernel_series_path() -> Path:
-    return ROOT / "env" / "kernel" / "series" / conf("KERNEL_SERIES", "base")
-
-
 def kernel_patch_dir() -> Path:
-    return ROOT / "env" / "kernel" / "patches" / conf("KERNEL_SERIES", "base")
+    value = os.environ.get("KERNEL_PATCH_DIR")
+    return Path(value).expanduser() if value else ROOT / "env" / "kernel" / "patches"
 
 
 def kernel_expected_patches() -> int:
-    series = kernel_series_path()
-    if not series.exists():
-        return 0
-    return len([line for line in series.read_text(encoding="utf-8").splitlines()
-                if line.strip() and not line.lstrip().startswith("#")])
+    return len(patch_entries(kernel_patch_dir()))
 
 
 def kernel_git(paths: Paths, *args: str) -> str:
@@ -482,14 +486,8 @@ def kernel_dirty(paths: Paths) -> bool:
     return bool(kernel_git(paths, "status", "--porcelain"))
 
 
-def kernel_apply_series(paths: Paths) -> None:
-    series = kernel_series_path()
-    if not series.exists():
-        return
-    for raw in series.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
-        if not line:
-            continue
+def kernel_apply_patches(paths: Paths) -> None:
+    for line in patch_entries(kernel_patch_dir()):
         patch = kernel_patch_dir() / line
         if not patch.is_file():
             die(f"内核 patch 不存在：{patch}")
@@ -505,7 +503,7 @@ def kernel_apply_series(paths: Paths) -> None:
 
 def init_kernel_git(paths: Paths, reset: bool) -> None:
     if os.environ.get("KERNEL_GIT") == "0":
-        info("KERNEL_GIT=0：跳过内核 git 基线（kernel hack/export 不可用）")
+        info("KERNEL_GIT=0：跳过内核 git 基线（kernel checkout/patch 不可用）")
         return
     src = paths.kernel_src
     if not (src / ".git").exists():
@@ -521,25 +519,27 @@ def init_kernel_git(paths: Paths, reset: bool) -> None:
     elif not kernel_git_ok(paths, "rev-parse", "--verify", "-q", "lab-base"):
         die(f"{src} 有 .git 但没有 lab-base 标签；删除该目录后重新 init")
 
+    migrate_work_branch(src)
+
     if not reset:
         if kernel_dirty(paths):
-            die(f"{src} 有未提交改动：先 python3 tools/devops.py kernel export，"
+            die(f"{src} 有未提交改动：先 python3 tools/devops.py kernel patch，"
                 f"或 git stash；--reset 会丢弃")
-        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", "lab/work"):
+        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
             actual = int(kernel_git(paths, "rev-list", "--count",
-                                    "lab/work", "--not", "lab-base") or 0)
+                                    "dev", "--not", "lab-base") or 0)
             expected = kernel_expected_patches()
             if actual > expected:
-                die(f"内核 lab/work 比 recipe 多 {actual - expected} 个提交："
-                    f"先 python3 tools/devops.py kernel export，或 --reset 丢弃")
+                die(f"内核 dev 比 recipe 多 {actual - expected} 个提交："
+                    f"先 python3 tools/devops.py kernel patch，或 --reset 丢弃")
 
-    run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", "lab/work",
+    run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", "dev",
          "lab-base"])
     run(["git", "-C", str(src), "reset", "-q", "--hard", "lab-base"])
     if reset:
         run(["git", "-C", str(src), "clean", "-q", "-fdx"])
-    info(f"内核：{src}（series={conf('KERNEL_SERIES', 'base')}）")
-    kernel_apply_series(paths)
+    info(f"内核：{src}（patches={kernel_patch_dir()}）")
+    kernel_apply_patches(paths)
 
 
 # --------------------------------------------------------------------------
@@ -589,7 +589,7 @@ def cmd_init(args, paths: Paths) -> int:
     print(f"  内核      {paths.kernel_src}")
     print(f"  busybox   {paths.busybox_src}")
     print(f"  QEMU      {paths.qemu_src}  (base {conf('QEMU_BASE')[:12]}, "
-          f"series {conf('QEMU_SERIES', 'base')})")
+          f"{qemu_expected_patches()} 个 patch)")
     print(f"  构建目录  {paths.build}")
     print()
     print("下一步：")
@@ -926,12 +926,14 @@ def cmd_qemu(args, paths: Paths) -> int:
     if not (paths.qemu_src / ".git").exists():
         die("QEMU 源码还没准备好：先 python3 tools/devops.py init")
 
+    migrate_work_branch(paths.qemu_src)
+
     if args.action == "status":
         base = conf("QEMU_BASE")
-        series = conf("QEMU_SERIES", "base")
         print(f"仓库      {paths.qemu_src}")
-        print(f"recipe    base={base} series={series} "
-              f"({qemu_expected_patches()} 个 patch)")
+        print(f"recipe    base={base} "
+              f"({qemu_expected_patches()} 个 patch，"
+              f"目录 {qemu_patch_dir()})")
         try:
             branch = git_out(paths, "rev-parse", "--abbrev-ref", "HEAD")
             print(f"分支      {branch}")
@@ -943,61 +945,60 @@ def cmd_qemu(args, paths: Paths) -> int:
         return 0
 
     if args.action == "diff":
-        branch = "lab/work" if git_ok(paths, "rev-parse", "--verify",
-                                       "-q", "lab/work") else "HEAD"
+        branch = "dev" if git_ok(paths, "rev-parse", "--verify",
+                                       "-q", "dev") else "HEAD"
         print_diff(paths.qemu_src, conf("QEMU_BASE"), branch, args.full)
         return 0
 
-    if args.action == "hack":
-        if git_ok(paths, "show-ref", "--verify", "-q", "refs/heads/lab/work"):
-            run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "lab/work"])
+    if args.action == "checkout":
+        if git_ok(paths, "show-ref", "--verify", "-q", "refs/heads/dev"):
+            run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "dev"])
         else:
-            info("创建 lab/work 并重放当前 series")
+            info("创建 dev 并重放当前 patches")
             run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-B",
-                 "lab/work", conf("QEMU_BASE")])
-            qemu_apply_series(paths)
-        print(f"已切到 {paths.qemu_src} 的 lab/work")
-        print("改完 commit 后执行：python3 tools/devops.py qemu export")
+                 "dev", conf("QEMU_BASE")])
+            qemu_apply_patches(paths)
+        print(f"已切到 {paths.qemu_src} 的 dev")
+        print("改完 commit 后执行：python3 tools/devops.py qemu patch")
         print(f"增量编译：ninja -C {paths.qemu_build} qemu-system-aarch64")
         return 0
 
-    if args.action == "export":
+    if args.action == "patch":
         if qemu_dirty(paths):
             die(f"有未提交改动，先 git -C {paths.qemu_src} commit")
-        if not git_ok(paths, "rev-parse", "--verify", "-q", "lab/work"):
-            die("没有 lab/work 分支；先 python3 tools/devops.py qemu hack")
+        if not git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
+            die("没有 dev 分支；先 python3 tools/devops.py qemu checkout")
         base = conf("QEMU_BASE")
         if subprocess.run(["git", "-C", str(paths.qemu_src), "merge-base",
-                           "--is-ancestor", base, "lab/work"]).returncode != 0:
-            die(f"lab/work 不是基于 QEMU_BASE={base}；先更新 lab.conf 或 rebase")
-        count = int(git_out(paths, "rev-list", "--count", f"{base}..lab/work"))
+                           "--is-ancestor", base, "dev"]).returncode != 0:
+            die(f"dev 不是基于 QEMU_BASE={base}；先更新 lab.conf 或 rebase")
+        count = int(git_out(paths, "rev-list", "--count", f"{base}..dev"))
         if count <= 0:
-            die("lab/work 相对基线没有提交，无可导出内容")
+            die("dev 相对基线没有提交，无可导出内容")
         patch_dir = qemu_patch_dir()
         patch_dir.mkdir(parents=True, exist_ok=True)
         for old in patch_dir.glob("*.patch"):
             old.unlink()
         info(f"导出 {count} 个 commit 到 {patch_dir}")
         run(["git", "-C", str(paths.qemu_src), "format-patch",
-             "--zero-commit", "--no-signature", "-o", patch_dir,
-             f"{base}..lab/work"], stdout=subprocess.DEVNULL)
+             "--zero-commit", "--no-signature", "--no-numbered",
+             "--full-index", "-o", patch_dir, f"{base}..dev"],
+            stdout=subprocess.DEVNULL)
         names = sorted(item.name for item in patch_dir.glob("*.patch"))
-        qemu_series_path().write_text("\n".join(names) + "\n",
-                                      encoding="utf-8")
         print()
         for name in names:
             print(f"  {name}")
-        print("\n记得把 env/qemu/patches 和 series 一起提交。")
+        print("\n记得把 env/qemu/patches 一起提交。")
         return 0
 
     if args.action == "reset":
-        info(f"重置 lab/work 到 {conf('QEMU_BASE')} 并重放 series")
+        info(f"重置 dev 到 {conf('QEMU_BASE')} 并重放 patches")
         run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-f", "-B",
-             "lab/work", conf("QEMU_BASE")])
+             "dev", conf("QEMU_BASE")])
         run(["git", "-C", str(paths.qemu_src), "reset", "-q", "--hard",
              conf("QEMU_BASE")])
         run(["git", "-C", str(paths.qemu_src), "clean", "-q", "-fdx"])
-        qemu_apply_series(paths)
+        qemu_apply_patches(paths)
         return 0
 
     if args.action == "rebase":
@@ -1005,14 +1006,14 @@ def cmd_qemu(args, paths: Paths) -> int:
             die("用法：python3 tools/devops.py qemu rebase <新 base commit>")
         if not git_ok(paths, "cat-file", "-e", f"{args.base}^{{commit}}"):
             die(f"找不到 commit：{args.base}（先 git -C {paths.qemu_src} fetch）")
-        info(f"切到新基线 {args.base} 并重放 series")
+        info(f"切到新基线 {args.base} 并重放 patches")
         run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-f", "-B",
-             "lab/work", args.base])
+             "dev", args.base])
         run(["git", "-C", str(paths.qemu_src), "reset", "-q", "--hard",
              args.base])
-        qemu_apply_series(paths)
+        qemu_apply_patches(paths)
         print(f"\n重放成功。请更新 lab.conf：\n  QEMU_BASE={args.base}")
-        print("然后执行：python3 tools/devops.py qemu export")
+        print("然后执行：python3 tools/devops.py qemu patch")
         return 0
 
     die(f"未知 qemu 动作：{args.action}")
@@ -1050,71 +1051,73 @@ def cmd_kernel(args, paths: Paths) -> int:
         die(f"{src} 还没有 git 基线：先 python3 tools/devops.py init"
             f"（或 KERNEL_GIT=0 会跳过基线，kernel 命令不可用）")
 
+    migrate_work_branch(src)
+
     if args.action == "status":
-        branch = "lab/work" if kernel_git_ok(paths, "rev-parse", "--verify",
-                                             "-q", "lab/work") else "HEAD"
+        branch = "dev" if kernel_git_ok(paths, "rev-parse", "--verify",
+                                             "-q", "dev") else "HEAD"
         print(f"仓库      {src}")
-        print(f"recipe    base=lab-base series={conf('KERNEL_SERIES', 'base')} "
-              f"({kernel_expected_patches()} 个 patch)")
+        print(f"recipe    base=lab-base "
+              f"({kernel_expected_patches()} 个 patch，"
+              f"目录 {kernel_patch_dir()})")
         print(f"分支      {branch}")
         for line in kernel_git(paths, "log", "--oneline", "-5").splitlines():
             print(f"  {line}")
         print("工作区    " + ("有未提交改动" if kernel_dirty(paths) else "干净"))
         return 0
 
-    if args.action == "hack":
-        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", "lab/work"):
-            run(["git", "-C", str(src), "checkout", "-q", "lab/work"])
+    if args.action == "checkout":
+        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
+            run(["git", "-C", str(src), "checkout", "-q", "dev"])
         else:
-            info("创建 lab/work 并重放内核 series")
-            run(["git", "-C", str(src), "checkout", "-q", "-B", "lab/work",
+            info("创建 dev 并重放内核 patches")
+            run(["git", "-C", str(src), "checkout", "-q", "-B", "dev",
                  "lab-base"])
-            kernel_apply_series(paths)
-        print(f"已切到 {src} 的 lab/work")
-        print("改完 commit 后执行：python3 tools/devops.py kernel export")
+            kernel_apply_patches(paths)
+        print(f"已切到 {src} 的 dev")
+        print("改完 commit 后执行：python3 tools/devops.py kernel patch")
         return 0
 
-    if args.action == "export":
+    if args.action == "patch":
         if kernel_dirty(paths):
             die(f"有未提交改动，先 git -C {src} commit")
-        if not kernel_git_ok(paths, "rev-parse", "--verify", "-q", "lab/work"):
-            die("没有 lab/work 分支；先 python3 tools/devops.py kernel hack")
+        if not kernel_git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
+            die("没有 dev 分支；先 python3 tools/devops.py kernel checkout")
         if subprocess.run(["git", "-C", str(src), "merge-base",
-                           "--is-ancestor", "lab-base", "lab/work"]).returncode:
-            die("lab/work 不是基于 lab-base；先 kernel reset")
+                           "--is-ancestor", "lab-base", "dev"]).returncode:
+            die("dev 不是基于 lab-base；先 kernel reset")
         count = int(kernel_git(paths, "rev-list", "--count",
-                               "lab-base..lab/work"))
+                               "lab-base..dev"))
         if count <= 0:
-            die("lab/work 相对基线没有提交，无可导出内容")
+            die("dev 相对基线没有提交，无可导出内容")
         patch_dir = kernel_patch_dir()
         patch_dir.mkdir(parents=True, exist_ok=True)
         for old in patch_dir.glob("*.patch"):
             old.unlink()
         info(f"导出 {count} 个 commit 到 {patch_dir}")
         run(["git", "-C", str(src), "format-patch", "--zero-commit",
-             "--no-signature", "-o", patch_dir, "lab-base..lab/work"],
+             "--no-signature", "--no-numbered", "--full-index",
+             "-o", patch_dir, "lab-base..dev"],
             stdout=subprocess.DEVNULL)
         names = sorted(item.name for item in patch_dir.glob("*.patch"))
-        kernel_series_path().write_text("\n".join(names) + "\n",
-                                        encoding="utf-8")
         print()
         for name in names:
             print(f"  {name}")
-        print("\n记得把 env/kernel/patches 和 series 一起提交。")
+        print("\n记得把 env/kernel/patches 一起提交。")
         return 0
 
     if args.action == "reset":
-        info("重置内核 lab/work 到 lab-base 并重放 series")
-        run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", "lab/work",
+        info("重置内核 dev 到 lab-base 并重放 patches")
+        run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", "dev",
              "lab-base"])
         run(["git", "-C", str(src), "reset", "-q", "--hard", "lab-base"])
         run(["git", "-C", str(src), "clean", "-q", "-fdx"])
-        kernel_apply_series(paths)
+        kernel_apply_patches(paths)
         return 0
 
     if args.action == "diff":
-        branch = "lab/work" if kernel_git_ok(paths, "rev-parse", "--verify",
-                                             "-q", "lab/work") else "HEAD"
+        branch = "dev" if kernel_git_ok(paths, "rev-parse", "--verify",
+                                             "-q", "dev") else "HEAD"
         print_diff(src, "lab-base", branch, args.full)
         return 0
 
@@ -1154,8 +1157,7 @@ def cmd_status(args, paths: Paths) -> int:
     print(f"内核      {conf('KERNEL_VERSION')}")
     print(f"busybox   {conf('BUSYBOX_VERSION')}")
     print(f"QEMU      {conf('QEMU_TAG')}  base={conf('QEMU_BASE')}  "
-          f"series={conf('QEMU_SERIES', 'base')} "
-          f"({qemu_expected_patches()} 个 patch)")
+          f"patches={qemu_expected_patches()} 个")
     print()
     for label, path in (("external", paths.external), ("build", paths.build),
                         ("QEMU 源码", paths.qemu_src),
@@ -1319,7 +1321,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     qemu = sub.add_parser("qemu", help="QEMU 定制工作流")
     qemu.add_argument("action",
-                      choices=("status", "diff", "hack", "export", "reset",
+                      choices=("status", "diff", "checkout", "patch", "reset",
                                "rebase"))
     qemu.add_argument("base", nargs="?")
     qemu.add_argument("--full", action="store_true",
@@ -1327,7 +1329,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     kernel = sub.add_parser("kernel", help="内核定制工作流")
     kernel.add_argument("action",
-                        choices=("status", "diff", "hack", "export", "reset"))
+                        choices=("status", "diff", "checkout", "patch", "reset"))
     kernel.add_argument("--full", action="store_true",
                         help="diff 时输出完整补丁内容")
 

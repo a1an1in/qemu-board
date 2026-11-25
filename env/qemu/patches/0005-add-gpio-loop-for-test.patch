@@ -1,14 +1,14 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: a1an1in <a1an1in@sina.com>
 Date: Tue, 11 Aug 2026 10:49:52 +0800
-Subject: [PATCH 5/5] add gpio loop for test
+Subject: [PATCH] add gpio loop for test
 
 ---
  hw/arm/virt.c | 5 +++++
  1 file changed, 5 insertions(+)
 
 diff --git a/hw/arm/virt.c b/hw/arm/virt.c
-index 55fb943b31..b7f83418f8 100644
+index 55fb943b314bdd6e27e8ba8f4e65668cd3641043..b7f83418f8a03a6d3baf0c0345240fe5ffb94de5 100644
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
 @@ -1881,6 +1881,11 @@ static void create_gpio_devices(const VirtMachineState *vms, int gpio,

@@ -2,18 +2,18 @@
 
 - 版本由 `lab.conf` 的 `KERNEL_VERSION` 固定，源码从 `KERNEL_URL` 下载并按 `KERNEL_SHA256` 校验。
 - `arm64-virt.config` 是完整 `.config`，`init` 会复制到 `build/kernel/.config`，编译前跑 `olddefconfig`。
-- `series/<series>` + `patches/<series>/` 是内核代码补丁队列（默认 `KERNEL_SERIES=base`）。
+- `env/kernel/patches/*.patch` 是内核代码补丁，按文件名 0001、0002... 顺序应用（默认没有）。
 - `external/linux-*` 在 `init` 时建立本地 git 基线（`lab-base` 标签），方便看 diff 和生成 patch。
 
 ## 改内核代码 → 生成 patch
 
 ```sh
 python3 tools/devops.py init           # 首次：建立 lab-base 基线
-python3 tools/devops.py kernel hack    # 切到 lab/work
+python3 tools/devops.py kernel checkout
 vim external/linux-4.9.263/drivers/...
 git -C external/linux-4.9.263 commit -am "my change"
-python3 tools/devops.py kernel export  # → env/kernel/patches/<series>/*.patch + series
-git add env/kernel/patches env/kernel/series
+python3 tools/devops.py kernel patch   # → env/kernel/patches/*.patch
+git add env/kernel/patches
 git commit -m "kernel: my change"
 ```
 

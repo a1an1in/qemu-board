@@ -1,6 +1,0 @@
-0001-Add-vfpga.patch
-0002-add-eeprom.patch
-0003-add-2-different-temperature-sensors.patch
-0004-virt-spi.patch
-0005-add-gpio-loop-for-test.patch
-0006-hw-misc-edu-route-DMA-through-IOMMU-address-space.patch

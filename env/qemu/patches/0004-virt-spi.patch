@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: a1an1in <a1an1in@sina.com>
 Date: Mon, 10 Aug 2026 10:43:06 +0800
-Subject: [PATCH 4/5] =?UTF-8?q?virt=E6=96=B0=E5=A2=9Espi=E8=AE=BE=E5=A4=87?=
+Subject: [PATCH] =?UTF-8?q?virt=E6=96=B0=E5=A2=9Espi=E8=AE=BE=E5=A4=87?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -13,7 +13,7 @@ Content-Transfer-Encoding: 8bit
  3 files changed, 75 insertions(+)
 
 diff --git a/hw/arm/Kconfig b/hw/arm/Kconfig
-index 46baaaead4..a8f877ce4c 100644
+index 46baaaead4bec7aa1aa373a921ce4e45b5ab5c6e..a8f877ce4c7b821d70308ca4bdcbf79a2183e23e 100644
 --- a/hw/arm/Kconfig
 +++ b/hw/arm/Kconfig
 @@ -22,6 +22,8 @@ config ARM_VIRT
@@ -26,7 +26,7 @@ index 46baaaead4..a8f877ce4c 100644
      select DESIGNWARE_I2C
      select AT24C # EEPROM
 diff --git a/hw/arm/virt.c b/hw/arm/virt.c
-index 6850c1ab82..55fb943b31 100644
+index 6850c1ab821fd473f812a4c3a7897642884aa976..55fb943b314bdd6e27e8ba8f4e65668cd3641043 100644
 --- a/hw/arm/virt.c
 +++ b/hw/arm/virt.c
 @@ -40,6 +40,8 @@
@@ -137,7 +137,7 @@ index 6850c1ab82..55fb943b31 100644
  
      create_pcie(vms);
 diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
-index c132ef65f3..0286518840 100644
+index c132ef65f31acd3ed858d0791ac6619d6f75e565..028651884092f8c86bbe5f5459ca583eb1376d9e 100644
 --- a/include/hw/arm/virt.h
 +++ b/include/hw/arm/virt.h
 @@ -100,6 +100,7 @@ enum {
