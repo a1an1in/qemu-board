@@ -7,11 +7,10 @@
 
 ```sh
 cd external/linux-4.9.263
-git checkout dev
-# 改代码并 commit
+# 工作分支是 master，改代码并 commit
 rm -f ../../env/kernel/patches/*.patch
 git format-patch --zero-commit --no-signature --no-numbered --full-index \
-    -o ../../env/kernel/patches lab-base..dev
+    -o ../../env/kernel/patches lab-base..master
 ```
 
 也可以把现成的 `git format-patch` 文件放进本目录（文件名决定顺序）。

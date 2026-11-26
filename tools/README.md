@@ -20,7 +20,7 @@ python3 tools/devops.py <命令> [选项]
 | `init` | 按 `lab.conf` + `env/` 还原 recipe：下载/校验/解包内核与 busybox，浅拉 QEMU 基线并打 patch。`--reset` 丢弃 `external/qemu` 本地改动；`--skip-qemu/--skip-kernel/--skip-busybox` 跳过部分 |
 | `build [all\|qemu\|kernel\|busybox\|initramfs\|drivers] [驱动路径]` | 编译。默认 `all`（环境四件套）；`build drivers` 编全部 `drivers/**`，也可 `build drivers/chardev`、`build drivers/chardev/i2c-tmp105` 只编某一个。`--jobs/--kdir/--arch/--cross-prefix/--sparse` |
 | `verify [子串]` | 依次运行 `tests/*/*/verify_qemu.sh`，可按名字过滤（如 `hwmon`） |
-| `qemu status\|diff\|checkout\|patch\|reset\|rebase <base>` | QEMU 定制工作流；patch 目录是 `env/qemu/patches/`（按文件名排序） |
+| `qemu status\|diff\|patch\|reset\|rebase <base>` | QEMU 定制工作流；工作分支固定 `master`，patch 目录是 `env/qemu/patches/`（按文件名排序） |
 | `clean [drivers\|env\|all]` | 清驱动产物 / `build/` / `build/+external/`；非交互环境需 `--yes` |
 | `status` | 查看版本、路径、产物和 QEMU 分支状态 |
 | `list` | 列出会被构建的模块目录 |
@@ -60,7 +60,7 @@ python3 tools/devops.py <命令> [选项]
 ### 看改动了什么
 
 ```sh
-python3 tools/devops.py qemu status        # base/patches/分支/最近提交/是否脏
+python3 tools/devops.py qemu status        # base/patches/当前分支/最近提交/是否脏
 python3 tools/devops.py qemu diff          # 相对基线的 stat + 文件列表
 python3 tools/devops.py qemu diff --full   # 完整 diff
 ```
@@ -70,29 +70,27 @@ python3 tools/devops.py qemu diff --full   # 完整 diff
 ```sh
 git -C external/linux-4.9.263 status
 git -C external/linux-4.9.263 diff
-git -C external/linux-4.9.263 log --oneline lab-base..dev
+git -C external/linux-4.9.263 log --oneline lab-base..master
 ```
 
 也可以直接用 git（`external/qemu` 是完整仓库，`external/linux-*` 在 `init` 后也有
-`lab-base`/`dev`）：
+`lab-base` 基线和 `master` 工作分支）：
 
 ```sh
-git -C external/qemu log --oneline dev
-git -C external/qemu diff b428fe036233..dev -- hw/arm/virt.c
+git -C external/qemu log --oneline master
+git -C external/qemu diff b428fe036233..master -- hw/arm/virt.c
 
 git -C external/linux-4.9.263 status
-git -C external/linux-4.9.263 diff lab-base..dev
-git -C external/linux-4.9.263 log --oneline lab-base..dev
+git -C external/linux-4.9.263 diff lab-base..master
+git -C external/linux-4.9.263 log --oneline lab-base..master
 ```
 
 ### QEMU：改代码 → 导出补丁
 
 ```sh
-python3 tools/devops.py init          # 首次
-python3 tools/devops.py qemu checkout     # 切到 external/qemu 的 dev
-vim external/qemu/hw/arm/virt.c       # 改代码
-ninja -C build/qemu qemu-system-aarch64
-python3 tools/devops.py build qemu           # 只编 QEMU（增量）
+python3 tools/devops.py init          # 首次：external/qemu 落在 master
+vim external/qemu/hw/arm/virt.c       # 直接改，默认就在 master 上
+python3 tools/devops.py build qemu    # 只编 QEMU（增量）
 
 git -C external/qemu add -A
 git -C external/qemu commit -m "virt: add foo sensor at 0x4d"
@@ -101,11 +99,10 @@ git add env/qemu/patches
 git commit -m "qemu: add foo sensor at 0x4d"
 ```
 
-- `qemu checkout` 只做一件事：确保 `external/qemu` 在 `dev` 分支（不存在则从
-  `QEMU_BASE` 创建并重放当前 patches）。它**不编译、不导出、不动内核**；
-  已经在 `dev` 时基本是 no-op。
-- `qemu patch` 要求 `external/qemu` 工作区干净（先 commit），并按 `QEMU_BASE..dev`
-  生成 patch；文件名是 `0001-...` 这种，**文件名排序就是应用顺序**。
+- 不再有 `dev`/`qemu checkout` 这一层：`init` 会把 `external/qemu` 固定在
+  `master` = `QEMU_BASE` + 当前 patches，后续改动直接 commit 到 `master`。
+- `qemu patch` 要求 `external/qemu` 工作区干净（先 commit），并按
+  `QEMU_BASE..master` 生成 patch；文件名是 `0001-...` 这种，**文件名排序就是应用顺序**。
 - `qemu patch` 用 `git format-patch --zero-commit`，所以 patch 内容可复现。
 - 只想临时分享未提交改动：`git -C external/qemu diff > /tmp/foo.patch`；但它**不会**
   进入 recipe，`init`/`qemu reset` 后就会消失。
@@ -113,7 +110,7 @@ git commit -m "qemu: add foo sensor at 0x4d"
 
 ```sh
 python3 tools/devops.py qemu reset    # 回到 base + 当前 patches
-ninja -C build/qemu qemu-system-aarch64
+python3 tools/devops.py build qemu    # 重新编译
 python3 tools/devops.py verify
 ```
 
@@ -139,15 +136,14 @@ git commit -m "chardev_i2c_tmp105: ..."
 ### 内核：直接用 git
 
 ```sh
-python3 tools/devops.py init           # 首次：建立 lab-base 基线 + dev 分支
+python3 tools/devops.py init           # 首次：建立 lab-base 基线，工作分支为 master
 
 cd external/linux-4.9.263
-git checkout dev                       # init 已建；不存在时 git checkout -b dev lab-base
-vim drivers/...
+vim drivers/...                        # init 后已经 checkout 到 master
 git commit -am "my change"
 rm -f ../../env/kernel/patches/*.patch
 git format-patch --zero-commit --no-signature --no-numbered --full-index \
-    -o ../../env/kernel/patches lab-base..dev
+    -o ../../env/kernel/patches lab-base..master
 cd ../..
 git add env/kernel/patches
 git commit -m "kernel: my change"
@@ -157,7 +153,7 @@ git commit -m "kernel: my change"
 
 ```sh
 cd external/linux-4.9.263
-git checkout -f -B dev lab-base
+git checkout -f -B master lab-base
 git clean -fdx
 git am --3way ../../env/kernel/patches/*.patch
 ```

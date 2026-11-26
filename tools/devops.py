@@ -14,7 +14,7 @@
     python3 tools/devops.py build drivers/chardev        # 只编某个子系统
     python3 tools/devops.py build drivers/chardev/i2c-tmp105
     python3 tools/devops.py verify                 # 跑全部端到端测试
-    python3 tools/devops.py qemu status|diff|checkout|patch|reset|rebase
+    python3 tools/devops.py qemu status|diff|patch|reset|rebase
     python3 tools/devops.py clean env|all          # 删构建产物/源码
     python3 tools/devops.py status                 # 看版本、路径、产物
 
@@ -45,6 +45,9 @@ from pathlib import Path, PurePosixPath
 ROOT = Path(__file__).resolve().parent.parent
 CONF: dict[str, str] = {}
 VERBOSE = False
+
+# 源码工作区统一在 master 上直接开发，不再创建/切换 dev、lab/work 分支。
+WORK_BRANCH = "master"
 
 
 class DevopsError(RuntimeError):
@@ -377,13 +380,8 @@ def current_branch(repo: Path) -> str:
     return proc.stdout.strip() if proc.returncode == 0 else ""
 
 
-def valid_branch(name: str) -> bool:
-    return subprocess.run(["git", "check-ref-format", "--branch", name],
-                          capture_output=True).returncode == 0
-
-
 def migrate_work_branch(repo: Path) -> None:
-    """兼容旧分支名 lab/work：存在且 dev 不存在时直接改名。"""
+    """旧版本在 dev / lab-work 上开发；统一改名到 master，避免提交被孤立。"""
     if not (repo / ".git").exists():
         return
 
@@ -392,9 +390,13 @@ def migrate_work_branch(repo: Path) -> None:
             ["git", "-C", str(repo), "rev-parse", "--verify", "-q",
              f"refs/heads/{name}"], capture_output=True).returncode == 0
 
-    if not exists("dev") and exists("lab/work"):
-        info("迁移旧分支 lab/work -> dev")
-        run(["git", "-C", str(repo), "branch", "-m", "lab/work", "dev"])
+    if exists(WORK_BRANCH):
+        return
+    for legacy in ("dev", "lab/work"):
+        if exists(legacy):
+            info(f"迁移旧分支 {legacy} -> {WORK_BRANCH}")
+            run(["git", "-C", str(repo), "branch", "-m", legacy, WORK_BRANCH])
+            return
 
 
 def qemu_dirty(paths: Paths) -> bool:
@@ -436,13 +438,13 @@ def init_qemu(paths: Paths, reset: bool) -> None:
         if qemu_dirty(paths):
             die(f"{q} 有未提交改动：先 python3 tools/devops.py qemu patch，"
                 f"或 git stash；--reset 会丢弃")
-        if git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
+        if git_ok(paths, "rev-parse", "--verify", "-q", WORK_BRANCH):
             base = conf("QEMU_BASE")
             actual = int(git_out(paths, "rev-list", "--count",
-                                 "dev", "--not", base) or 0)
+                                 WORK_BRANCH, "--not", base) or 0)
             expected = qemu_expected_patches()
             if actual > expected:
-                die(f"dev 比 recipe 多 {actual - expected} 个提交："
+                die(f"{WORK_BRANCH} 比 recipe 多 {actual - expected} 个提交："
                     f"先 python3 tools/devops.py qemu patch，或 --reset 丢弃")
 
     base = conf("QEMU_BASE")
@@ -463,11 +465,11 @@ def init_qemu(paths: Paths, reset: bool) -> None:
                                               f"{base}^{{commit}}"):
             die(f"无法获取 QEMU 基线 {base}；检查网络或 QEMU_FALLBACK_DEPTH")
 
-    run(["git", "-C", str(q), "checkout", "-q", "-f", "-B", "dev", base])
+    run(["git", "-C", str(q), "checkout", "-q", "-f", "-B", WORK_BRANCH, base])
     run(["git", "-C", str(q), "reset", "-q", "--hard", base])
     if reset:
         run(["git", "-C", str(q), "clean", "-q", "-fdx"])
-    info(f"QEMU：{q}（patches={qemu_patch_dir()}）")
+    info(f"QEMU：{q}（分支 {WORK_BRANCH}，patches={qemu_patch_dir()}）")
     qemu_apply_patches(paths)
 
 
@@ -510,7 +512,7 @@ def kernel_apply_patches(paths: Paths) -> None:
         if proc.returncode != 0:
             die(f"应用内核 patch {line} 失败。\n"
                 f"在 {paths.kernel_src} 解决后 git am --continue，"
-                f"或 git checkout -f -B dev lab-base 放弃。")
+                f"或 git checkout -f -B {WORK_BRANCH} lab-base 放弃。")
 
 
 def init_kernel_git(paths: Paths, reset: bool) -> None:
@@ -537,15 +539,15 @@ def init_kernel_git(paths: Paths, reset: bool) -> None:
         if kernel_dirty(paths):
             die(f"{src} 有未提交改动：先 git commit 或 git stash；"
                 f"--reset 会丢弃")
-        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", "dev"):
+        if kernel_git_ok(paths, "rev-parse", "--verify", "-q", WORK_BRANCH):
             actual = int(kernel_git(paths, "rev-list", "--count",
-                                    "dev", "--not", "lab-base") or 0)
+                                    WORK_BRANCH, "--not", "lab-base") or 0)
             expected = kernel_expected_patches()
             if actual > expected:
-                die(f"内核 dev 比 recipe 多 {actual - expected} 个提交："
+                die(f"内核 {WORK_BRANCH} 比 recipe 多 {actual - expected} 个提交："
                     f"先用 git format-patch 导出，或 --reset 丢弃")
 
-    run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", "dev",
+    run(["git", "-C", str(src), "checkout", "-q", "-f", "-B", WORK_BRANCH,
          "lab-base"])
     run(["git", "-C", str(src), "reset", "-q", "--hard", "lab-base"])
     if reset:
@@ -948,6 +950,9 @@ def cmd_qemu(args, paths: Paths) -> int:
     if not (paths.qemu_src / ".git").exists():
         die("QEMU 源码还没准备好：先 python3 tools/devops.py init")
 
+    if args.target and args.action != "rebase":
+        die(f"{args.action} 不接受参数：开发统一在 {WORK_BRANCH} 分支进行")
+
     migrate_work_branch(paths.qemu_src)
 
     if args.action == "status":
@@ -967,33 +972,16 @@ def cmd_qemu(args, paths: Paths) -> int:
         return 0
 
     if args.action == "diff":
-        branch = current_branch(paths.qemu_src) or "HEAD"
-        print_diff(paths.qemu_src, conf("QEMU_BASE"), branch, args.full)
-        return 0
-
-    if args.action == "checkout":
-        branch = args.target or "dev"
-        if not valid_branch(branch):
-            die(f"非法分支名：{branch}")
-        if git_ok(paths, "show-ref", "--verify", "-q",
-                  f"refs/heads/{branch}"):
-            run(["git", "-C", str(paths.qemu_src), "checkout", "-q", branch])
-        else:
-            info(f"创建 {branch} 并重放当前 patches")
-            run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-B",
-                 branch, conf("QEMU_BASE")])
-            qemu_apply_patches(paths)
-        print(f"已切到 {paths.qemu_src} 的 {branch}")
-        print("改完 commit 后执行：python3 tools/devops.py qemu patch")
-        print(f"增量编译：ninja -C {paths.qemu_build} qemu-system-aarch64")
+        print_diff(paths.qemu_src, conf("QEMU_BASE"), WORK_BRANCH, args.full)
         return 0
 
     if args.action == "patch":
         if qemu_dirty(paths):
             die(f"有未提交改动，先 git -C {paths.qemu_src} commit")
         branch = current_branch(paths.qemu_src)
-        if not branch:
-            die("当前是 detached HEAD；先 qemu checkout <branch>")
+        if branch != WORK_BRANCH:
+            die(f"external/qemu 当前在 {branch or 'detached HEAD'}；"
+                f"开发统一在 {WORK_BRANCH} 分支（先 python3 tools/devops.py init）")
         base = conf("QEMU_BASE")
         if subprocess.run(["git", "-C", str(paths.qemu_src), "merge-base",
                            "--is-ancestor", base, branch]).returncode != 0:
@@ -1018,12 +1006,9 @@ def cmd_qemu(args, paths: Paths) -> int:
         return 0
 
     if args.action == "reset":
-        branch = args.target or current_branch(paths.qemu_src) or "dev"
-        if not valid_branch(branch):
-            die(f"非法分支名：{branch}")
-        info(f"重置 {branch} 到 {conf('QEMU_BASE')} 并重放 patches")
+        info(f"重置 {WORK_BRANCH} 到 {conf('QEMU_BASE')} 并重放 patches")
         run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-f", "-B",
-             branch, conf("QEMU_BASE")])
+             WORK_BRANCH, conf("QEMU_BASE")])
         run(["git", "-C", str(paths.qemu_src), "reset", "-q", "--hard",
              conf("QEMU_BASE")])
         run(["git", "-C", str(paths.qemu_src), "clean", "-q", "-fdx"])
@@ -1033,15 +1018,12 @@ def cmd_qemu(args, paths: Paths) -> int:
     if args.action == "rebase":
         if not args.target:
             die("用法：python3 tools/devops.py qemu rebase <新 base commit>")
-        branch = current_branch(paths.qemu_src) or "dev"
-        if not valid_branch(branch):
-            die(f"非法分支名：{branch}")
         if not git_ok(paths, "cat-file", "-e", f"{args.target}^{{commit}}"):
             die(f"找不到 commit：{args.target}"
                 f"（先 git -C {paths.qemu_src} fetch）")
-        info(f"把 {branch} 切到新基线 {args.target} 并重放 patches")
+        info(f"把 {WORK_BRANCH} 切到新基线 {args.target} 并重放 patches")
         run(["git", "-C", str(paths.qemu_src), "checkout", "-q", "-f", "-B",
-             branch, args.target])
+             WORK_BRANCH, args.target])
         run(["git", "-C", str(paths.qemu_src), "reset", "-q", "--hard",
              args.target])
         qemu_apply_patches(paths)
@@ -1263,11 +1245,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     qemu = sub.add_parser("qemu", help="QEMU 定制工作流")
     qemu.add_argument("action",
-                      choices=("status", "diff", "checkout", "patch", "reset",
+                      choices=("status", "diff", "patch", "reset",
                                "rebase"))
     qemu.add_argument("target", nargs="?",
-                      help="checkout/reset 的分支名（默认 dev），"
-                           "或 rebase 的新 base commit")
+                      help="rebase 的新 base commit（其余动作不接受参数）")
     qemu.add_argument("--full", action="store_true",
                       help="diff 时输出完整补丁内容")
 

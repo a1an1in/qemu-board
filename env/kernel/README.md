@@ -3,20 +3,19 @@
 - 版本由 `lab.conf` 的 `KERNEL_VERSION` 固定，源码从 `KERNEL_URL` 下载并按 `KERNEL_SHA256` 校验。
 - `arm64-virt.config` 是完整 `.config`，`init` 会复制到 `build/kernel/.config`，编译前跑 `olddefconfig`。
 - `env/kernel/patches/*.patch` 是内核代码补丁，按文件名 0001、0002... 顺序应用（默认没有）。
-- `external/linux-*` 在 `init` 时建立本地 git 基线（`lab-base` 标签 + `dev` 分支）。
+- `external/linux-*` 在 `init` 时建立本地 git 基线（`lab-base` 标签），工作分支是 `master`。
 
 ## 改内核代码 → 生成 patch（直接用 git）
 
 ```sh
-python3 tools/devops.py init           # 首次：建立 lab-base 和 dev
+python3 tools/devops.py init           # 首次：建立 lab-base，checkout 到 master
 
 cd external/linux-4.9.263
-git checkout dev
 vim drivers/...
 git commit -am "my change"
 rm -f ../../env/kernel/patches/*.patch
 git format-patch --zero-commit --no-signature --no-numbered --full-index \
-    -o ../../env/kernel/patches lab-base..dev
+    -o ../../env/kernel/patches lab-base..master
 cd ../..
 git add env/kernel/patches
 git commit -m "kernel: my change"
@@ -27,14 +26,14 @@ git commit -m "kernel: my change"
 ```sh
 git -C external/linux-4.9.263 status
 git -C external/linux-4.9.263 diff
-git -C external/linux-4.9.263 diff lab-base..dev
+git -C external/linux-4.9.263 diff lab-base..master
 ```
 
 重放/回退：
 
 ```sh
 cd external/linux-4.9.263
-git checkout -f -B dev lab-base
+git checkout -f -B master lab-base
 git clean -fdx
 git am --3way ../../env/kernel/patches/*.patch
 ```

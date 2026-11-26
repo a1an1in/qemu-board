@@ -7,10 +7,11 @@ patches/*.patch       # 自研 virt 补丁，按文件名 0001、0002... 顺序�
 ```
 
 - `lab.conf` 的 `QEMU_BASE` 决定基线；`env/qemu/patches/` 里的 patch 按文件名排序应用。
-- 日常不要把 `external/qemu` 当成长期仓库；改动必须回流成 patch：
+- `external/qemu` 的工作分支固定是 `master`（由 `init` 还原成 `base + patches`），
+  日常直接在上面改；改动必须回流成 patch：
   ```sh
-  python3 tools/devops.py qemu checkout
-  # 改代码、ninja -C build/qemu、手动启动 QEMU 验证
+  python3 tools/devops.py init
+  # 改代码、python3 tools/devops.py build qemu、手动启动 QEMU 验证
   git -C external/qemu commit -am "..."
   python3 tools/devops.py qemu patch
   git add env/qemu/patches && git commit -m "qemu: ..."
